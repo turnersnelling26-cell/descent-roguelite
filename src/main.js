@@ -16,15 +16,17 @@ import {
   generateDungeon, mulberry32, makeRng, delaunay, themeFromSeed,
   THEMES, THEME_KEYS, TYPE, VOID, FLOOR, WALL, POOL,
 } from './gen/dungeon.js';
-import { createPlayer, spawnPlayer, updatePlayer, tryDash } from './game/player.js';
+import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump } from './game/player.js';
 import { fogReset, fogSuspend, fogMark, fogGate, fogSeen, fogWrite,
          setFogEnabled, fogStats } from './game/fog.js';
-import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory } from './game/enemies.js';
+import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage } from './game/enemies.js';
 import { createLoot, spawnLoot, updateLoot, lootStats, showToast } from './game/loot.js';
 import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } from './game/shrines.js';
 import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
 import { createHazards, spawnHazards, updateHazards, hazardStats } from './game/hazards.js';
 import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats } from './game/shop.js';
+import { createParkour, spawnParkour, updateParkour, parkourStats } from './game/parkour.js';
+import { RELICS } from './game/relics.js';
 import { sfx, ensureAudio, setMuted, audioStats } from './game/audio.js';
 import * as run from './game/state.js';
 import { FINAL_FLOOR } from './game/state.js';
@@ -66,6 +68,7 @@ createEnemies(scene);
 createLoot(scene);
 createSeal(scene);
 createHazards(scene);
+createParkour(scene);
 window.__player = player;   // exposed for automated tests
 window.__fog = fogStats;
 window.__enemies = enemyStats;
@@ -100,8 +103,77 @@ const portal = (()=>{
   scene.add(g);
   return { g, ring, disc, light };
 })();
-let portalOpen = false, gameOver = false;
-window.__portal = ()=>({ open: portalOpen, dead: run.state.dead, over: gameOver });
+let portalOpen = false, gameOver = false, paused = false;
+window.__portal = ()=>({ open: portalOpen, dead: run.state.dead, over: gameOver, paused });
+window.__parkour = parkourStats;
+
+/* -------- floating damage numbers (pooled DOM, projected each frame) -------- */
+const dmgPool = [];
+{
+  const wrap = document.getElementById('dmgnums');
+  if(wrap) for(let i=0; i<12; i++){
+    const d = document.createElement('div');
+    d.className = 'dn';
+    wrap.appendChild(d);
+    dmgPool.push({ el:d, at:-1e9, x:0, z:0 });
+  }
+}
+let dmgIdx = 0;
+const _dm = new THREE.Vector3();
+onEnemyDamage((x, z, amt, crit)=>{
+  if(!dmgPool.length) return;
+  const s = dmgPool[dmgIdx++ % dmgPool.length];
+  s.x = x; s.z = z; s.at = elapsed;
+  s.el.textContent = crit ? amt + '!' : amt;
+  s.el.classList.toggle('crit', crit);
+});
+function updateDmgNums(){
+  for(const s of dmgPool){
+    const k = (elapsed - s.at) / 0.7;
+    if(k >= 1){ if(s.el.style.opacity !== '0') s.el.style.opacity = '0'; continue; }
+    _dm.set(s.x, 1.15 + k*0.9, s.z).project(cam);
+    s.el.style.opacity = String(1 - k);
+    s.el.style.transform = 'translate(' + ((_dm.x*0.5 + 0.5)*innerWidth).toFixed(1) + 'px,' +
+                                          ((-_dm.y*0.5 + 0.5)*innerHeight).toFixed(1) + 'px)';
+  }
+}
+
+/* -------- fog-aware minimap (tile-res ImageData, pixel-scaled by CSS) -------- */
+const mmCv = document.getElementById('minimap');
+const mmCtx = mmCv ? mmCv.getContext('2d') : null;
+let mmImg = null;
+function minimapRebuild(){
+  if(!mmCtx || !D) return;
+  if(mmCv.width !== D.W){ mmCv.width = D.W; mmCv.height = D.H; mmImg = null; }
+  if(!mmImg) mmImg = mmCtx.createImageData(D.W, D.H);
+  const px = mmImg.data, bossId = D.rooms[D.boss].id;
+  for(let i=0; i<D.W*D.H; i++){
+    const o = i*4;
+    let r=0, g=0, b=0, a=0;
+    if(fogSeen(i)){
+      const t = D.grid[i];
+      if(t === WALL){ r=58; g=64; b=90; a=235; }
+      else if(t === FLOOR || t === POOL){
+        if(D.roomId[i] === bossId){ r=96; g=38; b=42; }
+        else if(D.corridor[i]){ r=26; g=29; b=40; }
+        else { r=38; g=43; b=60; }
+        a = 235;
+      }
+    }
+    px[o]=r; px[o+1]=g; px[o+2]=b; px[o+3]=a;
+  }
+}
+function minimapDraw(){
+  if(!mmCtx || !mmImg || !D) return;
+  mmCtx.putImageData(mmImg, 0, 0);
+  const pp = player.root.position;
+  mmCtx.fillStyle = '#3fd0bb';
+  mmCtx.fillRect(Math.floor(pp.x + D.W/2) - 1, Math.floor(pp.z + D.H/2) - 1, 3, 3);
+  if(portalOpen){
+    mmCtx.fillStyle = '#5fffd0';
+    mmCtx.fillRect(Math.floor(portal.g.position.x + D.W/2) - 1, Math.floor(portal.g.position.z + D.H/2) - 1, 3, 3);
+  }
+}
 /* audio may only start after a user gesture (autoplay policy) */
 addEventListener('keydown', ensureAudio);
 addEventListener('pointerdown', ensureAudio);
@@ -1426,12 +1498,13 @@ function settleAll(){ for(const k in meshes) writeInstances(meshes[k], Infinity)
    every frame anyway, with the fog gate folded in */
 const FOG_LIVE = new Set(['flame','flameCore','crystal']);
 let fogWriteUntil = -1;   // writes run until this time so newly seen tiles grow in
-let lastPlayerTile = -1, lastStepAt = -1;
+let lastPlayerTile = -1, lastStepAt = -1, lastRAt = -1e9;
 function fogRefresh(){
   for(const k in meshes) if(!FOG_LIVE.has(k)) fogWrite(meshes[k], elapsed);
   applyObjectVis();                     // hero meshes / shafts follow fogSeen
   updateLiquidFog(elapsed);
   liquidMat.uniforms.uFogOn.value = el.tFog.checked ? 1 : 0;
+  minimapRebuild();
   fogWriteUntil = elapsed + 0.6;
 }
 function applyFogToggle(){
@@ -1447,7 +1520,8 @@ function finishAnim(){
   spawnEnemies(D);
   spawnLoot(D);
   spawnShrines(D);
-  spawnHazards(D);
+  spawnParkour(D);                                 // registers the obstacle mask
+  spawnHazards(D, D.params.themeKey);
   { const es = enemyStats();                       // ward quota = foes outside the lair
     spawnSeal(D, es.total - es.bossFoes.length); }
   fogReset(D, elapsed);
@@ -1520,6 +1594,10 @@ function forge(animate, fresh=true){
   fogSuspend();                  // build animation shows the whole pipeline; fog re-arms at finishAnim
   liquidMat.uniforms.uFogOn.value = 0;
   hidePortal(); gameOver = false; dismissVictory(); cancelShop();
+  paused = false; document.getElementById('pause')?.classList.remove('show');
+  /* fog always re-arms on a new floor/run — fixes "fog never came back" after
+     lifting it with the Scrying Orb late in a previous run */
+  if(!el.tFog.checked){ el.tFog.checked = true; setFogEnabled(true, null, 0, 0, elapsed); }
   let seed;
   if(fresh){
     run.newRun();                // brand-new run at floor 1
@@ -1659,7 +1737,7 @@ function tick(){
     if(animT > animEnd + 0.35) finishAnim();
   }
   liveUpdate(elapsed, animating ? animT - 2.3 : Infinity);
-  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen()){
+  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen() && !paused){
     run.tickRegen(dt);
     if(updatePlayer(player, dt, D, yaw, elapsed)){
       /* follow while moving; idle leaves camTarget alone so pan/orbit still work */
@@ -1682,9 +1760,12 @@ function tick(){
     updateShrines(dt, D, player, elapsed);
     updateSeal(dt, D, elapsed);
     updateHazards(dt, D, player, elapsed);
+    updateParkour(dt, D, player, elapsed);
     updateObjective();
     if(portalOpen) updatePortal(elapsed);
+    minimapDraw();
   }
+  updateDmgNums();
   if(run.state.dead && !gameOver) showGameOver();
   renderer.info.reset();
   renderFrame();
@@ -1775,6 +1856,13 @@ document.querySelectorAll('#shrine .scard').forEach(c=>c.addEventListener('click
 document.querySelectorAll('#shop .shopcard').forEach(c=>c.addEventListener('click', ()=>buyShopItem(+c.dataset.i)));
 document.getElementById('shopGo').addEventListener('click', ()=>shopDescend());
 
+/* relic codex: generated from the registry; owned entries get highlighted by renderHud */
+{
+  const box = document.getElementById('codex');
+  if(box) box.innerHTML = Object.entries(RELICS).map(([k, r])=>
+    '<div class="kb" data-relic="' + k + '"><span>' + r.name + '</span><b>' + r.desc + '</b></div>').join('');
+}
+
 addEventListener('keydown', e=>{
   const tag = e.target.tagName;
   if(tag==='BUTTON') return;
@@ -1787,7 +1875,24 @@ addEventListener('keydown', e=>{
     if(e.code==='Enter' || e.code==='Space'){ e.preventDefault(); shopDescend(); return; }
     if(e.code!=='KeyR') return;    // only R (new run) escapes the shop
   }
-  if(e.code==='KeyR'){ el.seed.value = 1 + Math.floor(Math.random()*999999); forge(true); }
+  if(e.code==='KeyR'){
+    /* a live run needs a second R within 2s — no more accidental resets */
+    const live = !gameOver && !run.state.dead && player.root.visible && !animating;
+    if(live && elapsed - lastRAt > 2){
+      lastRAt = elapsed;
+      showToast('Abandon this run? Press R again.');
+      return;
+    }
+    el.seed.value = 1 + Math.floor(Math.random()*999999); forge(true);
+  }
+  else if(e.code==='KeyC'){
+    if(!animating && player.root.visible && !run.state.dead && !gameOver && !paused) tryJump(elapsed);
+  }
+  else if(e.code==='Escape'){
+    if(shopOpen() || animating || gameOver || run.state.dead) return;
+    paused = !paused;
+    document.getElementById('pause')?.classList.toggle('show', paused);
+  }
   else if(e.code==='KeyG'){ el.tGraph.checked = !el.tGraph.checked; if(!animating) setOverlayStatic(); }
   else if(e.code==='KeyH'){ el.tHeat.checked = !el.tHeat.checked; applyHeat(el.tHeat.checked); }
   else if(e.code==='KeyT'){

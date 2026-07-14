@@ -11,6 +11,7 @@ import { fogGate } from './fog.js';
 import * as run from './state.js';
 import { sfx } from './audio.js';
 import { WEAPONS } from './weapons.js';
+import { spawnMimicPack } from './enemies.js';
 
 const POOL = 6, WPN_POOL = 4, COLLECT_R = 0.8, WPN_COLLECT_R = 0.9, HEAL = 2, POP = 0.3;
 const WEAPON_DROPS = ['hammer', 'wand'];        // starter (blade) is equipped; these are found
@@ -49,6 +50,7 @@ export function spawnLoot(D){
   items = D.props.filter(p=>p.kind==='chest').slice(0, POOL).map((p,i)=>({
     x: p.x - D.W/2 + 0.5, z: p.y - D.H/2 + 0.5,
     ti: p.y*D.W + p.x, taken: false, takenAt: 0, ph: i*1.9, orb: orbs[i],
+    mimic: Math.random() < 0.2,          // one in five chests bites back
   }));
   collected = 0;
   orbs.forEach(o=>{ o.visible = false; o.scale.setScalar(1); });
@@ -91,8 +93,14 @@ export function updateLoot(dt, D, player, t){
     o.material.opacity = 0.95;
     if(g >= 0.99 && Math.hypot(pp.x - it.x, pp.z - it.z) < COLLECT_R){
       it.taken = true; it.takenAt = t; collected++;
-      run.collectChest(HEAL);
-      sfx.pickup();
+      if(it.mimic){                            // surprise! it was teeth all along
+        spawnMimicPack(it.x, it.z, it.ti, D);
+        showToast('A mimic!');
+        sfx.hurt();
+      } else {
+        run.collectChest(HEAL);
+        sfx.pickup();
+      }
     }
   }
 

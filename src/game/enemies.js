@@ -141,6 +141,14 @@ export function createEnemies(scene){
     m.visible = false; scene.add(m);
     eProjPool.push({ mesh:m, x:0, z:0, vx:0, vz:0, ttl:0, dmg:0 });
   }
+  /* heart pickups */
+  const hgeo = new THREE.OctahedronGeometry(0.16);
+  for(let i=0; i<HEART_N; i++){
+    const m = new THREE.Mesh(hgeo, new THREE.MeshBasicMaterial({
+      color:0xff5a6a, toneMapped:false, transparent:true, opacity:1 }));
+    m.visible = false; scene.add(m);
+    hearts.push({ mesh:m, live:false, x:0, z:0, at:0 });
+  }
 }
 
 function checkWin(){
@@ -161,7 +169,8 @@ export function spawnEnemies(D){
   bossRoomId = bossRoom.id;
   bossPos = { x: bossRoom.cx - D.W/2 + 0.5, z: bossRoom.cy - D.H/2 + 0.5 };
   dungeonName = D.name;
-  won = false; dismissVictory();
+  won = false; introShown = false; dismissVictory();
+  hearts.forEach(h=>{ h.live = false; h.mesh.visible = false; });
   /* enemies grow sturdier with the run's depth (character reset lives in
      newRun()/nextFloor(), called by main.js before the floor is built) */
   const hpMul = 1 + (run.state.floor - 1) * 0.3;
@@ -226,9 +235,24 @@ function summonGrunt(x, z, ti, hpMul){
   list.push(e);
 }
 
+/* a "chest" that bites — loot.js calls this when a mimic is sprung */
+export function spawnMimicPack(x, z, ti, D){
+  const hpMul = 1 + (run.state.floor - 1) * 0.3;
+  for(let k=0; k<3; k++){
+    const a = k/3*Math.PI*2 + Math.random(), r = 0.6 + Math.random()*0.4;
+    const sx = x + Math.sin(a)*r, sz = z + Math.cos(a)*r;
+    if(canStand(D, sx, sz, E_R)) summonGrunt(sx, sz, ti, hpMul);
+  }
+}
+
+/* hook for floating damage numbers (main.js renders them) */
+let onDamageCb = null;
+export const onEnemyDamage = cb => { onDamageCb = cb; };
+
 /* apply a hit from (fromX,fromZ): damage, knockback along the blow, death/kill */
-function damageEnemy(e, dmg, knock, fromX, fromZ, D, t){
+function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false){
   e.hp -= dmg; e.flashAt = t;
+  if(onDamageCb) onDamageCb(e.x, e.z, dmg, crit);
   sfx.hit();
   const d = Math.hypot(e.x - fromX, e.z - fromZ) || 1;
   const ux = (e.x - fromX)/d, uz = (e.z - fromZ)/d, kx = e.x + ux*knock, kz = e.z + uz*knock;
@@ -238,7 +262,33 @@ function damageEnemy(e, dmg, knock, fromX, fromZ, D, t){
     e.alive = false; e.deadAt = t; e.aggro = false;
     run.addKill(e.T.xp, e.T.gold);
     if(run.state.mods.lifesteal) run.heal(run.state.mods.lifesteal);   // Vampiric Fang
+    if(!e.isBoss && Math.random() < 0.08) dropHeart(e.x, e.z, t);      // the fallen sometimes leave a heart
     sfx.kill(); checkWin();
+  }
+}
+
+/* -------- heart drops: small pickups that heal 1, fading after 6s -------- */
+const HEART_N = 8, HEART_TTL = 6;
+let hearts = [];
+function dropHeart(x, z, t){
+  const h = hearts.find(h=>!h.live);
+  if(!h) return;
+  h.live = true; h.x = x; h.z = z; h.at = t;
+  h.mesh.visible = true;
+}
+function updateHearts(dt, player, t){
+  const pp = player.root.position;
+  for(const h of hearts){
+    if(!h.live) continue;
+    const age = t - h.at;
+    if(age > HEART_TTL){ h.live = false; h.mesh.visible = false; continue; }
+    h.mesh.position.set(h.x, 0.55 + 0.1*Math.sin(t*3 + h.x), h.z);
+    h.mesh.rotation.y = t*2;
+    h.mesh.material.opacity = age > HEART_TTL-1.5 ? (HEART_TTL-age)/1.5 : 1;   // blink out
+    if(Math.hypot(pp.x - h.x, pp.z - h.z) < 0.7){
+      h.live = false; h.mesh.visible = false;
+      run.heal(1); sfx.pickup();
+    }
   }
 }
 
@@ -273,7 +323,12 @@ function updateProjectiles(dt, D, t){
       pr.x = nx; pr.z = nz; pr.mesh.position.set(nx, 0.9, nz);
       for(const e of list){
         if(!e.alive) continue;
-        if(Math.hypot(e.x - nx, e.z - nz) < PROJ_HIT){ damageEnemy(e, pr.dmg, pr.knock, nx, nz, D, t); done = true; break; }
+        if(Math.hypot(e.x - nx, e.z - nz) < PROJ_HIT){
+          const crit = Math.random() < 0.10;
+          if(crit) sfx.crit();
+          damageEnemy(e, pr.dmg * (crit ? 2 : 1), pr.knock, nx, nz, D, t, crit);
+          done = true; break;
+        }
       }
     }
     if(done){ pr.mesh.visible = false; projActive.splice(i,1); projPool.push(pr); }
@@ -299,15 +354,17 @@ export function tryAttack(player, D, t){
     spawnProjectile(player, w, t);
     return;
   }
-  /* melee: radial swipe scaled to the weapon's reach */
+  /* melee: radial swipe scaled to the weapon's reach; 10% critical ×2 */
   attackAt = t; ringAt = t; attackRadius = w.radius;
   sfx.swing();
   ring.position.set(pp.x, 0.5, pp.z);
-  const dmg = w.dmg + run.state.mods.dmgBonus;   // Focusing Lens
+  const crit = Math.random() < 0.10;
+  const dmg = (w.dmg + run.state.mods.dmgBonus) * (crit ? 2 : 1);   // Focusing Lens + crit
+  if(crit) sfx.crit();
   for(const e of list){
     if(!e.alive) continue;
     if(Math.hypot(e.x - pp.x, e.z - pp.z) > w.radius) continue;
-    damageEnemy(e, dmg, w.knock, pp.x, pp.z, D, t);
+    damageEnemy(e, dmg, w.knock * (crit ? 1.4 : 1), pp.x, pp.z, D, t, crit);
   }
 }
 
@@ -369,12 +426,25 @@ function updateCharger(e, dt, D, pp, dist, t){   // idle → wind-up → dash �
     if(hit || t - e.modeT > T.chargeTime){ e.mode = 'recover'; e.recoverAt = t; }
   } else if(t - e.recoverAt > T.recover) e.mode = 'idle';
 }
+/* the boss never leaves its lair — every step must land on a lair tile */
+const roomAt = (D, x, z)=>{
+  const tx = Math.floor(x + D.W/2), tz = Math.floor(z + D.H/2);
+  return (tx<0 || tz<0 || tx>=D.W || tz>=D.H) ? -1 : D.roomId[tz*D.W + tx];
+};
+function moveBoss(e, tx, tz, step, D){
+  const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz) || 1;
+  e.face = Math.atan2(dx, dz);
+  const nx = e.x + (dx/d)*step;
+  if(canStand(D, nx, e.z, E_R) && roomAt(D, nx, e.z) === bossRoomId) e.x = nx;
+  const nz = e.z + (dz/d)*step;
+  if(canStand(D, e.x, nz, E_R) && roomAt(D, e.x, nz) === bossRoomId) e.z = nz;
+}
 function updateBoss(e, dt, D, pp, dist, t){      // 3 phases by HP: stalk → volley → burst
   const T = e.T, frac = e.hp / e.maxHp;
   e.phase = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
   e.face = Math.atan2(pp.x - e.x, pp.z - e.z);
   const spd = T.speed * (e.phase===3 ? 1.4 : e.phase===2 ? 1.15 : 1);
-  if(dist > 1.5) moveToward(e, pp.x, pp.z, spd*dt, D);   // close to melee; contact code handles the slam
+  if(dist > 1.5) moveBoss(e, pp.x, pp.z, spd*dt, D);     // close to melee, lair-bound
   if(e.phase >= 2 && dist <= T.fireRange && t - e.fireAt > T.fireCd){
     e.fireAt = t;
     fireSpread(e, pp, e.phase===3 ? 5 : 3, T.projSpeed, T.projDmg);
@@ -415,11 +485,23 @@ function updateEnemyProjectiles(dt, D, player, t){
     if(done){ pr.mesh.visible = false; eProjActive.splice(i,1); eProjPool.push(pr); }
   }
 }
+/* dramatic splash the first time the boss is revealed each floor */
+let introShown = false, introTimer = null;
+function showBossIntro(mega){
+  const el = document.getElementById('bossintro');
+  if(!el) return;
+  el.textContent = mega ? '⚔ THE TYRANT OF THE DEPTHS ⚔' : '⚔ GUARDIAN OF THE LAIR ⚔';
+  el.classList.add('show');
+  sfx.boom();
+  clearTimeout(introTimer);
+  introTimer = setTimeout(()=>el.classList.remove('show'), 2600);
+}
 function updateBossBar(t){
   const bar = document.getElementById('bossbar');
   if(!bar) return;
   const boss = list.find(e=>e.isBoss && e.alive);
   if(boss && fogGate(boss.ti, t) > 0.5){
+    if(!introShown){ introShown = true; showBossIntro(boss.T.summonCd !== undefined); }
     bar.classList.add('show');
     const frac = Math.max(0, boss.hp / boss.maxHp), fill = bar.querySelector('.bfill');
     fill.style.width = (frac*100) + '%';
@@ -529,6 +611,7 @@ export function updateEnemies(dt, D, player, t){
 
   updateProjectiles(dt, D, t);
   updateEnemyProjectiles(dt, D, player, t);
+  updateHearts(dt, player, t);
   updateBossBar(t);
 
   /* attack swing ring — sized to the equipped weapon's reach */

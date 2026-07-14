@@ -78,14 +78,22 @@
         <summary>How to play</summary>
         <div class="kbs">
           <div class="kb"><span>Move</span><b>W A S D</b></div>
-          <div class="kb"><span>Attack</span><b>Space</b></div>
-          <div class="kb"><span>Dash (dodge)</span><b>Shift</b></div>
-          <div class="kb"><span>New run</span><b>R</b></div>
-          <div class="kb"><span>Fog · Sound</span><b>F · M</b></div>
+          <div class="kb"><span>Attack (wand: 1 mana, seeks the nearest foe)</span><b>Space</b></div>
+          <div class="kb"><span>Dash — dodge (1 mana, brief invulnerability)</span><b>Shift</b></div>
+          <div class="kb"><span>Jump — clears pits &amp; parkour blocks</span><b>C</b></div>
+          <div class="kb"><span>Pause</span><b>Esc</b></div>
+          <div class="kb"><span>Abandon run (press twice)</span><b>R R</b></div>
+          <div class="kb"><span>Lift fog (needs Scrying Orb) · Sound</span><b>F · M</b></div>
           <div class="kb"><span>Pan · Zoom · Orbit</span><b>drag · wheel · right-drag</b></div>
           <div class="kb"><span>Generator tools</span><b>`</b></div>
         </div>
         <p class="tip">Conquer all five floors. Each boss lair is warded — slay foes to shatter the seal, then fell the boss to open the portal (and its shop) down. Red grunts swarm, blue casters snipe, orange chargers ram; spike traps skewer anything standing on them, and frozen lakes are treacherously slick. Dash (Shift) through danger, spend gold at the Wayshop, and claim boons at shrines — the Scrying Orb relic even lets F lift the fog. The Tyrant waits on floor five.</p>
+      </details>
+
+      <!-- RELIC CODEX -->
+      <details class="sec help">
+        <summary>Relic codex</summary>
+        <div class="kbs" id="codex"></div>
       </details>
 
       <!-- GENERATOR / DEV DRAWER (hidden by default) -->
@@ -206,8 +214,14 @@
     <div id="bossbar"><div class="blabel">⚔ BOSS</div><div class="btrack"><i class="bfill"></i></div></div>
 
     <div id="toast" role="status"></div>
+    <canvas id="minimap" aria-label="Minimap"></canvas>
+    <div id="dmgnums" aria-hidden="true"></div>
+    <div id="combo" aria-hidden="true"></div>
+    <div id="bossintro" role="status"></div>
+    <div id="lowhp" aria-hidden="true"></div>
+    <div id="pause"><div class="ptitle">PAUSED</div><div class="phint"><b>Esc</b> resumes</div></div>
 
-    <div id="hints"><b>WASD</b> move · <b>space</b> attack · <b>shift</b> dash · <b>R</b> new run · <b>F</b> fog · <b>M</b> sound · <b>`</b> tools</div>
+    <div id="hints"><b>WASD</b> move · <b>space</b> attack · <b>shift</b> dash · <b>C</b> jump · <b>Esc</b> pause · <b>RR</b> new run · <b>`</b> tools</div>
 
     <script type="module" src="./src/main.js"></script>
   </body>

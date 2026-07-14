@@ -108,4 +108,12 @@ export const sfx = {
   step(){ if(!live()) return; const t = ctx.currentTime;
     noise(t, 0.03, env(master, t, 0.03, 0.10), 'bandpass', 400 + Math.random()*250, null, 1.2);
   },
+  crit(){ if(!live()) return; const t = ctx.currentTime;   // bright upward zing
+    osc('square', 880, 1760, t, 0.12, env(master, t, 0.12, 0.4));
+    noise(t, 0.05, env(master, t, 0.05, 0.3), 'highpass', 3500, null, 1);
+  },
+  heartbeat(){ if(!live()) return; const t = ctx.currentTime;   // two low thumps
+    osc('sine', 62, 40, t, 0.14, env(master, t, 0.14, 0.7));
+    osc('sine', 58, 38, t + 0.22, 0.16, env(master, t + 0.22, 0.16, 0.55));
+  },
 };

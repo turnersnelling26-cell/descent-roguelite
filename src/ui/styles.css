@@ -196,6 +196,64 @@
   #bossbar .btrack{height:12px;background:#10121b;border:1px solid #3a2430;border-radius:6px;overflow:hidden;box-shadow:0 4px 16px #000a}
   #bossbar .bfill{display:block;height:100%;width:100%;background:#d8433a;border-radius:5px;transition:width .18s ease,background .3s}
 
+  /* fog-aware minimap — tile-res canvas scaled up with crisp pixels */
+  #minimap{
+    position:fixed;top:14px;right:14px;z-index:6;
+    width:152px;height:auto;image-rendering:pixelated;
+    background:#0a0c12aa;border:1px solid #1a1d2a;border-radius:8px;padding:4px;
+  }
+
+  /* floating damage numbers */
+  #dmgnums{position:fixed;inset:0;pointer-events:none;z-index:6}
+  #dmgnums .dn{
+    position:absolute;top:0;left:0;opacity:0;color:#ffd27a;font-size:13px;font-weight:700;
+    text-shadow:0 1px 3px #000;will-change:transform,opacity;margin-left:-8px;margin-top:-8px;
+  }
+  #dmgnums .dn.crit{color:#ff8a4a;font-size:17px}
+
+  /* combo pop */
+  #combo{
+    position:fixed;bottom:60px;left:50%;transform:translate(-50%,6px);
+    z-index:6;pointer-events:none;color:var(--gold);font-size:15px;letter-spacing:.18em;
+    text-shadow:0 2px 6px #000;opacity:0;transition:opacity .2s,transform .2s;
+  }
+  #combo.show{opacity:1;transform:translate(-50%,0)}
+
+  /* boss intro splash */
+  #bossintro{
+    position:fixed;top:26%;left:50%;transform:translate(-50%,-50%) scale(0.9);
+    z-index:8;pointer-events:none;text-align:center;
+    font-family:var(--serif);font-size:26px;letter-spacing:.2em;color:#ff6a55;
+    text-shadow:0 2px 18px #000, 0 0 30px #d8433a55;
+    opacity:0;transition:opacity .4s,transform .4s;
+  }
+  #bossintro.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+
+  /* low-HP vignette: pulsing red edges */
+  #lowhp{
+    position:fixed;inset:0;pointer-events:none;z-index:4;opacity:0;
+    background:radial-gradient(ellipse at center, transparent 55%, #d8433a44 100%);
+    transition:opacity .4s;
+  }
+  #lowhp.on{opacity:1;animation:lowpulse 1.1s ease-in-out infinite}
+  @keyframes lowpulse{0%,100%{opacity:.45}50%{opacity:1}}
+
+  /* pause overlay */
+  #pause{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+    z-index:9;text-align:center;padding:26px 54px;
+    background:#0a0c12e6;border:1px solid #2c3042;border-radius:14px;
+    opacity:0;pointer-events:none;transition:opacity .2s;
+  }
+  #pause.show{opacity:1}
+  #pause .ptitle{color:#eef0f6;font-size:15px;letter-spacing:.4em;margin-bottom:8px}
+  #pause .phint{color:#525871;font-size:10px}
+  #pause .phint b{color:#8d93a8;font-weight:400}
+
+  /* relic codex rows: owned entries glow gold */
+  #codex .kb.owned span{color:var(--gold)}
+  #codex .kb.owned b{color:#e8d9a8}
+
   /* pickup toast — brief centered banner (weapon found, etc.) */
   #toast{
     position:fixed;top:74px;left:50%;transform:translate(-50%,-8px);

@@ -12,6 +12,7 @@
 
 import { weaponOf } from './weapons.js';
 import { RELICS } from './relics.js';
+import { sfx } from './audio.js';
 
 /* relic modifiers, read by player.js / enemies.js / tickRegen. Multiplicative
    keys stack by product; the rest add. */
@@ -66,6 +67,11 @@ export function renderHud(){
   e.relics.innerHTML = state.relics.length
     ? state.relics.map(r=>'<span class="pill">'+r.name+'</span>').join('')
     : '<span class="dimpill">none yet</span>';
+  updateLowHp();
+  /* relic codex: mark owned entries */
+  document.querySelectorAll('#codex [data-relic]').forEach(row=>{
+    row.classList.toggle('owned', state.relics.some(r=>r.key === row.dataset.relic));
+  });
 }
 
 /* -------- lifecycle -------- */
@@ -136,8 +142,18 @@ export function equipWeapon(key){
 export function damage(n){                 // returns true if this blow was fatal
   state.hp = Math.max(0, state.hp - n);
   if(state.hp <= 0) state.dead = true;
+  if(!state.dead && state.hp <= 2) sfx.heartbeat();
   renderHud();
   return state.dead;
+}
+/* low-HP warning: red vignette + heartbeat, driven off renderHud */
+let lowOn = false;
+function updateLowHp(){
+  const low = !state.dead && state.hp > 0 && state.hp <= 2;
+  if(low !== lowOn){
+    lowOn = low;
+    document.getElementById('lowhp')?.classList.toggle('on', low);
+  }
 }
 export function heal(n){
   state.hp = Math.min(state.maxHp, state.hp + n);
@@ -149,7 +165,21 @@ export function reviveFloor(){             // Phase 1 death = respawn at full HP
 }
 
 /* -------- progression -------- */
+/* chained kills (within 3s) build a combo that multiplies gold */
+let comboN = 0, comboAt = -1e9, comboTimer = null;
+function comboPop(){
+  const el = document.getElementById('combo');
+  if(!el) return;
+  el.textContent = 'COMBO ×' + comboN;
+  el.classList.add('show');
+  clearTimeout(comboTimer);
+  comboTimer = setTimeout(()=>el.classList.remove('show'), 1400);
+}
 export function addKill(xp = 1, gold = 1){
+  const now = performance.now()/1000;
+  comboN = (now - comboAt < 3) ? comboN + 1 : 1;
+  comboAt = now;
+  if(comboN >= 2){ gold = Math.round(gold * (1 + 0.25*(comboN-1))); comboPop(); }
   state.kills++;
   state.gold += gold;
   state.xp += xp;
