@@ -1,41 +1,46 @@
 /**
- * DUNGEON FORGE — entry point.
+ * DESCENT — entry point.
  *
- * A self-contained procedural dungeon generator + real-time showcase.
- * The whole pipeline (scatter → separate → Delaunay → MST+loops → semantics
- * → carve → rasterize+BFS → decorate → instanced render) lives in this module,
- * driven by a single deterministic mulberry32 stream so any seed rebuilds the
- * exact same dungeon.
- *
- * Rendering targets Three.js r128 (see README → "A note on the Three.js
- * version"). The named-export namespace import below is the ESM equivalent of
- * the global `THREE` the original prototype pulled from a CDN.
+ * Three.js renderer, post-processing, minimap, and the game loop that wires
+ * the pure generator (src/gen/dungeon.js) to combat, fog, hazards, shops,
+ * and the meta save loop. Dungeons are deterministic: floor seeds rebuild
+ * the same layout and the same gameplay rolls.
  */
 import * as THREE from 'three';
 import {
   generateDungeon, mulberry32, makeRng, delaunay, themeFromSeed,
   THEMES, THEME_KEYS, TYPE, VOID, FLOOR, WALL, POOL,
 } from './gen/dungeon.js';
-import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump } from './game/player.js';
+import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump, failedDashNoMana, getDecoy } from './game/player.js';
+import { WEAPONS } from './game/weapons.js';
 import { fogReset, fogSuspend, fogMark, fogGate, fogSeen, fogWrite,
          setFogEnabled, fogStats } from './game/fog.js';
 import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage } from './game/enemies.js';
-import { createLoot, spawnLoot, updateLoot, lootStats, showToast } from './game/loot.js';
+import { createLoot, spawnLoot, updateLoot, lootStats, showToast, takeWeapon, weaponPromptActive } from './game/loot.js';
 import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } from './game/shrines.js';
 import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
 import { createHazards, spawnHazards, updateHazards, hazardStats } from './game/hazards.js';
-import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats } from './game/shop.js';
+import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats, resetShopRun } from './game/shop.js';
 import { createParkour, spawnParkour, updateParkour, parkourStats } from './game/parkour.js';
-import { RELICS } from './game/relics.js';
+import { createAltars, spawnAltars, updateAltars, selectAltar, altarActive } from './game/altars.js';
+import { selectBoon, boonOpen, queueLevelBoon } from './game/boons.js';
+import { RELICS, ALL_RELIC_KEYS } from './game/relics.js';
 import { sfx, ensureAudio, setMuted, audioStats } from './game/audio.js';
 import * as run from './game/state.js';
 import { FINAL_FLOOR } from './game/state.js';
+import { floorSeed, reseedGameplay } from './game/rng.js';
+import {
+  load as loadSave, getSave, recordRunEnd, noteFloorReached, flushSave,
+  nextUnlockTease, unlockLabel, snapshot as saveSnapshot,
+  setSetting, setHeatPrefs, saveRest, clearRest, loadRest,
+  encodeShare, parseShare, claimDailyAttempt, markHint,
+} from './game/save.js';
+import { floorTease } from './game/curriculum.js';
+import { updateHints, hintDashMana, hintElite, deathTip } from './game/hints.js';
 
 /* ================================================================
-   DUNGEON FORGE — procedural dungeon generator core + showcase
-   Pipeline: scatter → separate → Delaunay → MST+loops → semantics
-             → carve → rasterize+BFS → decorate → instanced render
-   Deterministic: mulberry32 threaded through every stage.
+   DESCENT — renderer + game loop
+   Generator: src/gen/dungeon.js (pure, seeded). Systems: src/game/*.
    ================================================================ */
 
 /* room-role tint colors (render-only, keyed by TYPE) */
@@ -69,6 +74,7 @@ createLoot(scene);
 createSeal(scene);
 createHazards(scene);
 createParkour(scene);
+createAltars(scene);
 window.__player = player;   // exposed for automated tests
 window.__fog = fogStats;
 window.__enemies = enemyStats;
@@ -81,6 +87,7 @@ window.__shrines = shrineStats;
 window.__seal = sealStats;
 window.__hazards = hazardStats;
 window.__shop = shopStats;
+window.__save = saveSnapshot;
 /* test hook: jump straight to floor n (descend path, character preserved) */
 window.__forgeFloor = n => { run.state.floor = n - 1; forge(false, false); };
 
@@ -163,10 +170,47 @@ function minimapRebuild(){
     px[o]=r; px[o+1]=g; px[o+2]=b; px[o+3]=a;
   }
 }
+/* Cartographer's Orb: F pulses pings for 3s, 20s cooldown; fog stays */
+let cartPulseUntil = -1e9, cartCdUntil = -1e9, cartPings = [];
+function tryCartographerPulse(t){
+  if(!run.state.relics.some(r=>r.key==='scry')) return false;
+  if(t < cartCdUntil){ showToast('The orb is cooling…'); return true; }
+  if(!D) return true;
+  cartPings = [];
+  /* chests, shrine crystals, mouths of unvisited rooms */
+  for(const p of D.props){
+    if(p.kind === 'chest' || p.kind === 'shrineCrystal'){
+      cartPings.push({ x: p.x, y: p.y, kind: p.kind });
+    }
+  }
+  for(const r of D.rooms){
+    if(r.type === 'entrance' || r.type === 'boss') continue;
+    const ti = Math.round(r.cy)*D.W + Math.round(r.cx);
+    if(!fogSeen(ti)) cartPings.push({ x: Math.round(r.cx), y: Math.round(r.cy), kind: 'room' });
+  }
+  cartPulseUntil = t + 3;
+  cartCdUntil = t + 20;
+  showToast('The orb pings secrets on the map…');
+  sfx.swing();
+  return true;
+}
+
 function minimapDraw(){
   if(!mmCtx || !mmImg || !D) return;
   mmCtx.putImageData(mmImg, 0, 0);
   const pp = player.root.position;
+  /* cartographer pulse overlays */
+  if(elapsed < cartPulseUntil){
+    for(const p of cartPings){
+      mmCtx.fillStyle = p.kind === 'chest' ? '#ffd27a' : p.kind === 'shrineCrystal' ? '#9b8cff' : '#7ab0ff';
+      mmCtx.fillRect(p.x - 1, p.y - 1, 3, 3);
+    }
+  }
+  const decoy = getDecoy();
+  if(decoy && elapsed < decoy.until){
+    mmCtx.fillStyle = '#9ffdea88';
+    mmCtx.fillRect(Math.floor(decoy.x + D.W/2) - 1, Math.floor(decoy.z + D.H/2) - 1, 3, 3);
+  }
   mmCtx.fillStyle = '#3fd0bb';
   mmCtx.fillRect(Math.floor(pp.x + D.W/2) - 1, Math.floor(pp.z + D.H/2) - 1, 3, 3);
   if(portalOpen){
@@ -1522,6 +1566,8 @@ function finishAnim(){
   spawnShrines(D);
   spawnParkour(D);                                 // registers the obstacle mask
   spawnHazards(D, D.params.themeKey);
+  spawnAltars(D);
+  if(run.state.floor >= 3) hintElite();
   { const es = enemyStats();                       // ward quota = foes outside the lair
     spawnSeal(D, es.total - es.bossFoes.length); }
   fogReset(D, elapsed);
@@ -1532,13 +1578,9 @@ function finishAnim(){
 }
 
 /* -------- run / descent / game-over -------- */
-let runSeed = 1337, runStartElapsed = 0;
-/* per-floor seed derived from the run's base seed — deterministic runs, distinct
-   floors (each descent forges a new dungeon with its own name + theme) */
-function floorSeed(base, floor){
-  const r = mulberry32(((base>>>0) ^ Math.imul(floor, 0x9e3779b9)) >>> 0);
-  return (r()*4294967296)>>>0;
-}
+let runSeed = 1337, runStartElapsed = 0, runRecorded = false;
+let floorStartElapsed = 0;
+
 function hidePortal(){ portalOpen = false; portal.g.visible = false; portal.light.intensity = 0; }
 function descend(){
   if(!portalOpen) return;
@@ -1555,41 +1597,98 @@ function updatePortal(t){
   const pp = player.root.position, pos = portal.g.position;
   if(Math.hypot(pp.x - pos.x, pp.z - pos.z) < 1.05) descend();
 }
+function runTimeSec(){
+  return Math.max(0, elapsed - runStartElapsed);
+}
 function runTime(){
-  const secs = Math.max(0, elapsed - runStartElapsed);
+  const secs = runTimeSec();
   return Math.floor(secs/60) + 'm ' + String(Math.floor(secs%60)).padStart(2,'0') + 's';
+}
+function formatBestLine(profile, thisFloor, newBest){
+  const best = profile.best.floor;
+  let line = 'Best: Floor ' + best + ' · this run: Floor ' + thisFloor;
+  if(newBest) line += '  ·  NEW BEST';
+  return line;
+}
+function fillEndScreen({ title, name, stats, won }){
+  const v = document.getElementById('victory');
+  if(!v) return;
+  const result = runRecorded ? null : recordRunEnd({
+    seed: runSeed,
+    floor: run.state.floor,
+    level: run.state.level,
+    kills: run.state.kills,
+    gold: run.state.gold,
+    timeSec: runTimeSec(),
+    deathBy: run.state.deathBy,
+    won,
+    explorer: run.state.explorer,
+    heat: run.state.heat,
+  });
+  runRecorded = true;
+  clearRest();
+  const profile = getSave();
+  const newBest = result ? result.newBest : false;
+  const gained = result ? result.gainedUnlocks : [];
+
+  v.querySelector('.vtitle').textContent = title;
+  v.querySelector('.vname').textContent = name;
+  v.querySelector('.vstats').textContent = stats;
+  const rec = v.querySelector('.vrecord');
+  if(rec){
+    const mark = run.state.explorer ? ' ◎' : '';
+    rec.textContent = formatBestLine(profile, run.state.floor, newBest) + mark;
+    rec.classList.toggle('best', !!newBest);
+  }
+  const tip = v.querySelector('.vtip');
+  if(tip){
+    if(won) tip.textContent = encodeShare(runSeed, run.state.heat) + ' · share this seed';
+    else tip.textContent = (run.state.deathBy ? 'Fell to ' + run.state.deathBy + '. ' : '') + deathTip(run.state.deathBy);
+  }
+  const un = v.querySelector('.vunlock');
+  if(un){
+    if(gained.length) un.textContent = 'Unlocked: ' + gained.map(unlockLabel).join(' · ');
+    else un.textContent = nextUnlockTease();
+  }
+  v.querySelector('.vhint').innerHTML = won
+    ? '<b>R</b> begins a new descent'
+    : '<b>R</b> to rise anew';
+  v.classList.add('show');
+  refreshMetaPanel();
 }
 function showGameOver(){
   gameOver = true;
   hidePortal();
-  const v = document.getElementById('victory');
-  if(!v) return;
-  v.querySelector('.vtitle').textContent = 'YOU FELL';
-  v.querySelector('.vname').textContent = D ? D.name : '';
-  v.querySelector('.vstats').textContent =
-    'Floor ' + run.state.floor + ' · ' + run.state.kills + ' slain · ' +
-    run.state.gold + ' gold · ' + runTime();
-  v.querySelector('.vhint').innerHTML = '<b>R</b> to rise anew';
-  v.classList.add('show');
+  fillEndScreen({
+    title: 'YOU FELL',
+    name: D ? D.name : '',
+    stats: 'Floor ' + run.state.floor + ' · ' + run.state.kills + ' slain · ' +
+      run.state.gold + ' gold · ' + runTime(),
+    won: false,
+  });
 }
 /* the mega boss falls on the final floor — the run is COMPLETE */
 function showRunComplete(){
   gameOver = true;
   hidePortal();
   sfx.win();
-  const v = document.getElementById('victory');
-  if(!v) return;
-  v.querySelector('.vtitle').textContent = '☼ THE DEPTHS CONQUERED ☼';
-  v.querySelector('.vname').textContent = D ? D.name : '';
-  v.querySelector('.vstats').textContent =
-    'All ' + FINAL_FLOOR + ' floors · ' + run.state.kills + ' slain · Lv ' + run.state.level +
-    ' · ' + run.state.gold + ' gold · ' + runTime();
-  v.querySelector('.vhint').innerHTML = '<b>R</b> begins a new descent';
-  v.classList.add('show');
+  fillEndScreen({
+    title: '☼ THE DEPTHS CONQUERED ☼',
+    name: D ? D.name : '',
+    stats: 'All ' + FINAL_FLOOR + ' floors · ' + run.state.kills + ' slain · Lv ' + run.state.level +
+      ' · ' + run.state.gold + ' gold · ' + runTime(),
+    won: true,
+  });
 }
 
 /* -------- forge -------- */
-function forge(animate, fresh=true){
+/**
+ * forge(animate, mode)
+ *   mode true/'fresh'  — new run floor 1
+ *   mode false/'down'  — descend next floor
+ *   mode { resume: data } — Rest restore at saved floor (no nextFloor)
+ */
+function forge(animate, mode=true){
   player.root.visible = false;   // respawned by finishAnim after the build
   fogSuspend();                  // build animation shows the whole pipeline; fog re-arms at finishAnim
   liquidMat.uniforms.uFogOn.value = 0;
@@ -1599,17 +1698,43 @@ function forge(animate, fresh=true){
      lifting it with the Scrying Orb late in a previous run */
   if(!el.tFog.checked){ el.tFog.checked = true; setFogEnabled(true, null, 0, 0, elapsed); }
   let seed;
-  if(fresh){
+  const isResume = mode && typeof mode === 'object' && mode.resume;
+  const fresh = mode === true || mode === 'fresh';
+  if(isResume){
+    const data = mode.resume;
+    runSeed = data.runSeed >>> 0;
+    run.applySerializedRun(data);
+    seed = floorSeed(runSeed, run.state.floor);
+    el.seed.value = seed;
+    runStartElapsed = elapsed;
+    runRecorded = false;
+  } else if(fresh){
     run.newRun();                // brand-new run at floor 1
+    resetShopRun();
     seed = (parseInt(el.seed.value,10)||0)>>>0;
     runSeed = seed;
     runStartElapsed = elapsed;
+    runRecorded = false;
+    /* apply heat prefs if unlocked */
+    const save = getSave();
+    if(save.unlocks.heat) run.setHeat({ ...save.heatPrefs });
+    else run.setHeat({});
   } else {
     run.nextFloor();             // descend: floor++, character preserved
     seed = floorSeed(runSeed, run.state.floor);
     el.seed.value = seed;        // reflect the derived seed in the dev box
   }
+  /* gameplay PRNG for this floor — before any spawn system rolls */
+  reseedGameplay(seed);
+  const gained = noteFloorReached(run.state.floor);
+  flushSave();                              // descent / floor reach — tallies + unlocks
+  if(gained.length){
+    showToast('Unlocked: ' + gained.map(unlockLabel).join(' · '));
+  }
   const themeKey = resolveTheme(seed);
+  run.noteTheme(themeKey);                 // curriculum + Tyrant memory
+  floorStartElapsed = elapsed;
+  lastObj = ''; lastProg = '';             // force objective refresh (tease)
   const params = {
     seed,
     roomCount:+el.rooms.value,
@@ -1642,6 +1767,30 @@ function forge(animate, fresh=true){
     for(const k in meshes) meshes[k].userData.settled = false;
     setFxRamp(0);
   } else finishAnim();
+  if(fresh && !isResume) maybeOfferStartWeapon();
+}
+
+/* Starting-weapon choice (unlock: floor 3 / startChoice) */
+function maybeOfferStartWeapon(){
+  const save = getSave();
+  if(!save.unlocks.startChoice) return;
+  const wielded = save.weaponsWielded.filter(k => WEAPONS[k]);
+  if(wielded.length < 2) return;
+  const el = document.getElementById('startWpn');
+  if(!el) return;
+  const box = el.querySelector('.scards');
+  box.innerHTML = wielded.slice(0, 6).map((k,i)=>{
+    const w = WEAPONS[k];
+    return '<button class="scard" data-key="'+k+'"><span class="skey">'+(i+1)+'</span><span class="sn">'+w.name+'</span><span class="sd">'+w.speedTag+'</span></button>';
+  }).join('');
+  box.querySelectorAll('.scard').forEach(c=>{
+    c.addEventListener('click', ()=>{
+      run.equipWeapon(c.dataset.key);
+      el.classList.remove('show');
+      showToast('You take the ' + WEAPONS[c.dataset.key].name);
+    });
+  });
+  el.classList.add('show');
 }
 
 /* -------- live per-frame animation: flames, crystals, liquids, particles -------- */
@@ -1695,7 +1844,13 @@ function updateObjective(){
      countdown — clearing the boss lair wins the floor, not every last spawn */
   const prog = run.state.kills + ' slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' ⛃';
   let obj, progLine = prog;
-  if(s.won){
+  const tease = floorTease(run.state.floor);
+  const teachWindow = (elapsed - floorStartElapsed) < 10 && tease && !s.won;
+  if(teachWindow){
+    obj = tease;
+    progLine = 'Floor ' + run.state.floor + ' · ' + prog;
+  }
+  else if(s.won){
     obj = finalFloor ? 'The depths are conquered!' : 'Descend through the portal';
     progLine = finalFloor ? 'Press R for a new descent' : 'Step into the glowing portal';
   }
@@ -1737,7 +1892,7 @@ function tick(){
     if(animT > animEnd + 0.35) finishAnim();
   }
   liveUpdate(elapsed, animating ? animT - 2.3 : Infinity);
-  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen() && !paused){
+  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen() && !boonOpen() && !paused){
     run.tickRegen(dt);
     if(updatePlayer(player, dt, D, yaw, elapsed)){
       /* follow while moving; idle leaves camTarget alone so pan/orbit still work */
@@ -1758,9 +1913,11 @@ function tick(){
     updateEnemies(dt, D, player, elapsed);
     updateLoot(dt, D, player, elapsed);
     updateShrines(dt, D, player, elapsed);
-    updateSeal(dt, D, elapsed);
+    updateSeal(dt, D, elapsed, player);
     updateHazards(dt, D, player, elapsed);
     updateParkour(dt, D, player, elapsed);
+    updateAltars(dt, D, player, elapsed);
+    updateHints(player, elapsed);
     updateObjective();
     if(portalOpen) updatePortal(elapsed);
     minimapDraw();
@@ -1854,29 +2011,116 @@ function toggleDev(open){
 el.devToggle.addEventListener('click', ()=>toggleDev());
 document.querySelectorAll('#shrine .scard').forEach(c=>c.addEventListener('click', ()=>selectShrine(+c.dataset.i)));
 document.querySelectorAll('#shop .shopcard').forEach(c=>c.addEventListener('click', ()=>buyShopItem(+c.dataset.i)));
-document.getElementById('shopGo').addEventListener('click', ()=>shopDescend());
+document.getElementById('shopGo')?.addEventListener('click', ()=>shopDescend());
+document.getElementById('shopRest')?.addEventListener('click', ()=>{
+  if(!shopOpen()) return;
+  saveRest(run.serializeRun(runSeed));
+  showToast('Rest saved — resume from the panel anytime.');
+  cancelShop();
+  gameOver = true;
+});
+document.querySelectorAll('#boon .scard').forEach(c=>c.addEventListener('click', ()=>selectBoon(+c.dataset.i)));
+document.getElementById('altarTake')?.addEventListener('click', ()=>selectAltar(true));
+document.getElementById('altarLeave')?.addEventListener('click', ()=>selectAltar(false));
 
-/* relic codex: generated from the registry; owned entries get highlighted by renderHud */
+/* relic codex: all relics + curses */
 {
   const box = document.getElementById('codex');
-  if(box) box.innerHTML = Object.entries(RELICS).map(([k, r])=>
-    '<div class="kb" data-relic="' + k + '"><span>' + r.name + '</span><b>' + r.desc + '</b></div>').join('');
+  if(box) box.innerHTML = ALL_RELIC_KEYS.map(k=>{
+    const r = RELICS[k];
+    return '<div class="kb'+(r.curse?' curse':'')+'" data-relic="'+k+'"><span>'+r.name+'</span><b>'+r.desc+'</b></div>';
+  }).join('');
 }
+
+function refreshMetaPanel(){
+  const s = getSave();
+  const box = document.getElementById('metaStats');
+  if(box){
+    const hist = (s.history || []).slice(0, 5).map(h=>
+      'F'+h.floor+(h.won?' ✓':'')+(h.explorer?' ◎':'')+(h.heat?' h'+h.heat:'')
+    ).join(' · ') || '—';
+    const t = s.tallies || {};
+    box.innerHTML =
+      '<div class="kb"><span>Best</span><b>Floor '+s.best.floor+(s.best.heat?' · heat '+s.best.heat:'')+'</b></div>'+
+      '<div class="kb"><span>Runs / Wins</span><b>'+s.runs+' / '+s.wins+'</b></div>'+
+      (s.bestExplorer.floor ? '<div class="kb"><span>Explorer best</span><b>Floor '+s.bestExplorer.floor+' ◎</b></div>' : '')+
+      '<div class="kb"><span>Recent</span><b>'+hist+'</b></div>'+
+      '<div class="kb"><span>Kills</span><b>g'+t.grunt+' c'+t.caster+' ch'+t.charger+'</b></div>'+
+      '<div class="kb"><span>Share</span><b>'+encodeShare(runSeed, run.state.heat)+'</b></div>';
+  }
+  const heatBox = document.getElementById('heatToggles');
+  if(heatBox){
+    heatBox.style.display = s.unlocks.heat ? '' : 'none';
+    heatBox.querySelectorAll('[data-heat]').forEach(inp=>{
+      inp.checked = !!s.heatPrefs[inp.dataset.heat];
+    });
+  }
+  const exp = document.getElementById('explorerMode');
+  if(exp) exp.checked = !!s.settings.explorerMode;
+  const restBtn = document.getElementById('resumeRest');
+  if(restBtn) restBtn.style.display = s.rest ? '' : 'none';
+}
+document.getElementById('explorerMode')?.addEventListener('change', e=>{
+  setSetting('explorerMode', e.target.checked);
+});
+document.querySelectorAll('#heatToggles [data-heat]').forEach(inp=>{
+  inp.addEventListener('change', ()=>{
+    const flags = {};
+    document.querySelectorAll('#heatToggles [data-heat]').forEach(i=>{ flags[i.dataset.heat] = i.checked; });
+    setHeatPrefs(flags);
+  });
+});
+document.getElementById('applyShare')?.addEventListener('click', ()=>{
+  const code = document.getElementById('shareIn')?.value || '';
+  const p = parseShare(code);
+  if(!p){ showToast('Invalid share code (DSC-seed-heat)'); return; }
+  el.seed.value = p.seed;
+  const flags = { swift:p.heat>=1, scarce:p.heat>=2, hungry:p.heat>=3, iron:p.heat>=4, fickle:p.heat>=5 };
+  /* heat N means N toggles — encode by count not order; apply first N keys */
+  const keys = ['swift','scarce','hungry','iron','fickle'];
+  const f = {};
+  keys.forEach((k,i)=>{ f[k] = i < p.heat; });
+  setHeatPrefs(f);
+  forge(true);
+  showToast('Loaded ' + encodeShare(p.seed, p.heat));
+});
+document.getElementById('playDaily')?.addEventListener('click', ()=>{
+  const seed = claimDailyAttempt();
+  if(seed == null){ showToast('Daily already attempted today'); return; }
+  el.seed.value = seed;
+  forge(true);
+  showToast('Daily seed engaged');
+});
+document.getElementById('resumeRest')?.addEventListener('click', ()=>{
+  const data = loadRest();
+  if(!data){ showToast('No rest save'); return; }
+  forge(false, { resume: data });
+  showToast('Resumed from Rest — floor ' + data.floor);
+  refreshMetaPanel();
+});
 
 addEventListener('keydown', e=>{
   const tag = e.target.tagName;
   if(tag==='BUTTON') return;
   if(tag==='INPUT' && e.target.type!=='range' && e.target.type!=='checkbox') return;
+  if(boonOpen() && (e.code==='Digit1' || e.code==='Digit2' || e.code==='Digit3')){
+    e.preventDefault(); selectBoon(+e.code.slice(5) - 1); return;
+  }
+  if(altarActive() && (e.code==='Digit1' || e.code==='Digit2')){
+    e.preventDefault(); selectAltar(e.code==='Digit1'); return;
+  }
+  if(weaponPromptActive() && e.code==='Digit1'){
+    e.preventDefault(); takeWeapon(); return;
+  }
   if(shrineActive() && (e.code==='Digit1' || e.code==='Digit2' || e.code==='Digit3')){
     e.preventDefault(); selectShrine(+e.code.slice(5) - 1); return;
   }
   if(shopOpen()){
     if(/^Digit[1-4]$/.test(e.code)){ e.preventDefault(); buyShopItem(+e.code.slice(5) - 1); return; }
     if(e.code==='Enter' || e.code==='Space'){ e.preventDefault(); shopDescend(); return; }
-    if(e.code!=='KeyR') return;    // only R (new run) escapes the shop
+    if(e.code!=='KeyR') return;
   }
   if(e.code==='KeyR'){
-    /* a live run needs a second R within 2s — no more accidental resets */
     const live = !gameOver && !run.state.dead && player.root.visible && !animating;
     if(live && elapsed - lastRAt > 2){
       lastRAt = elapsed;
@@ -1886,10 +2130,10 @@ addEventListener('keydown', e=>{
     el.seed.value = 1 + Math.floor(Math.random()*999999); forge(true);
   }
   else if(e.code==='KeyC'){
-    if(!animating && player.root.visible && !run.state.dead && !gameOver && !paused) tryJump(elapsed);
+    if(!animating && player.root.visible && !run.state.dead && !gameOver && !paused && !boonOpen()) tryJump(elapsed);
   }
   else if(e.code==='Escape'){
-    if(shopOpen() || animating || gameOver || run.state.dead) return;
+    if(shopOpen() || boonOpen() || animating || gameOver || run.state.dead) return;
     paused = !paused;
     document.getElementById('pause')?.classList.toggle('show', paused);
   }
@@ -1901,20 +2145,22 @@ addEventListener('keydown', e=>{
     forge(true);
   }
   else if(e.code==='KeyF'){
-    /* lifting the fog is a boon, not a birthright — requires the Scrying Orb */
-    if(run.state.relics.some(r=>r.key==='scry')){ el.tFog.checked = !el.tFog.checked; applyFogToggle(); }
-    else showToast('The fog resists you… seek the Scrying Orb.');
+    if(!tryCartographerPulse(elapsed))
+      showToast('The fog resists you… seek the Cartographer\'s Orb.');
   }
   else if(e.code==='KeyM'){ el.tSound.checked = !el.tSound.checked; setMuted(!el.tSound.checked); }
   else if(e.code==='KeyP'){ el.tPost.checked = !el.tPost.checked; POST.enabled = el.tPost.checked; }
   else if(e.code==='Backquote'){ e.preventDefault(); toggleDev(); }
   else if(e.code==='ShiftLeft' || e.code==='ShiftRight'){
-    if(!animating && player.root.visible && !run.state.dead) tryDash(player, elapsed);
+    if(!animating && player.root.visible && !run.state.dead && !boonOpen()){
+      if(failedDashNoMana()) hintDashMana();
+      else tryDash(player, elapsed);
+    }
   }
   else if(e.code==='Space'){
     e.preventDefault();
     if(animating) finishAnim();
-    else if(player.root.visible && !run.state.dead) tryAttack(player, D, elapsed);
+    else if(player.root.visible && !run.state.dead && !boonOpen()) tryAttack(player, D, elapsed);
   }
 });
 
@@ -1927,5 +2173,11 @@ addEventListener('resize', ()=>{
 });
 
 /* -------- go -------- */
+loadSave();
+run.onLevelUp(queueLevelBoon);
+refreshMetaPanel();
 forge(true);           // fresh run at floor 1 (forge → newRun fills the character sheet)
+if(getSave().runs === 0){
+  showToast(nextUnlockTease());
+}
 tick();

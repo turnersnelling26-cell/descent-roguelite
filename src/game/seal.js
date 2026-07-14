@@ -13,9 +13,11 @@ import * as run from './state.js';
 import { fogSeen } from './fog.js';
 import { showToast } from './loot.js';
 import { sfx } from './audio.js';
+import { floorWardFrac } from './curriculum.js';
+import { markHint } from './save.js';
+import { floatHint } from './hints.js';
 
 const POOL = 14;
-const QUOTA_FRAC = 0.5;      // slay half the floor's outside foes to break the ward
 
 let walls = [];              // pooled barrier meshes
 let cells = [];              // sealed tile indices in D.grid
@@ -49,7 +51,9 @@ export function spawnSeal(D, outsideEnemies){
       (z>0   && D.roomId[c-W] === bossId && D.grid[c-W] === FLOOR);
     if(touches) found.push(c);
   }
-  need = Math.min(Math.ceil(outsideEnemies * QUOTA_FRAC), Math.max(0, outsideEnemies));
+  let frac = floorWardFrac(run.state.floor);
+  if(run.state.heatFlags?.hungry) frac = 0.65;
+  need = Math.min(Math.ceil(outsideEnemies * frac), Math.max(0, outsideEnemies));
   if(!found.length || need <= 0) return;          // nothing to seal / trivial floor
   sealed = true;
   killsBase = run.state.kills;
@@ -63,7 +67,7 @@ export function spawnSeal(D, outsideEnemies){
   });
 }
 
-export function updateSeal(dt, D, t){
+export function updateSeal(dt, D, t, player){
   if(!sealed) return;
   if(run.state.kills - killsBase >= need){         // the ward shatters
     sealed = false;
@@ -74,12 +78,21 @@ export function updateSeal(dt, D, t){
     return;
   }
   const pulse = 0.24 + 0.14*Math.sin(t*3.1);
+  const pp = player?.root?.position;
+  const have = Math.min(need, run.state.kills - killsBase);
   for(let i=0; i<cells.length; i++){
     const m = walls[i];
     m.visible = fogSeen(m.userData.ti);
     m.material.opacity = pulse;
     m.scale.y = 1 + 0.05*Math.sin(t*2.2 + i);
+    /* touch barrier → one-time live-count hint */
+    if(pp && m.visible){
+      const d = Math.hypot(pp.x - m.position.x, pp.z - m.position.z);
+      if(d < 1.2 && markHint('seal')){
+        floatHint('Slain ' + have + ' of ' + need + ' — the ward holds');
+      }
+    }
   }
 }
 
-export const sealStats = ()=>({ sealed, need, have: Math.min(need, run.state.kills - killsBase) });
+export const sealStats = ()=>({ sealed, need, have: Math.min(need, Math.max(0, run.state.kills - killsBase)) });

@@ -1,5 +1,9 @@
 MIT License
 
+Copyright (c) 2026 Turner Snelling
+
+Portions of the procedural dungeon generator and painterly Three.js presentation
+are derived from Dungeon Forge by Majid Manzarpour:
 Copyright (c) 2026 Majid Manzarpour
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

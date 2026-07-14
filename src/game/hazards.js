@@ -23,6 +23,8 @@ import { fogSeen, fogGate } from './fog.js';
 import { dashInvuln, airborne, applyRoot, applySlow } from './player.js';
 import { damageEnemiesAt } from './enemies.js';
 import { sfx } from './audio.js';
+import { gI, gF, gRaw } from './rng.js';
+import { floorThemeHazards } from './curriculum.js';
 
 const CAP = 24, PERIOD = 2.6, WARN_AT = 1.5, OUT_AT = 2.0, IN_AT = 2.4;
 const HIT_R = 0.62, DMG = 1, PLAYER_CD = 1.0, CONCEAL_R = 6;
@@ -103,12 +105,13 @@ export function createHazards(scene){
   scene.add(icicleRing, icicleCone);
 }
 
-/* pick a clear floor tile inside a room set, spaced from taken spots */
+/* pick a clear floor tile inside a room set, spaced from taken spots (seeded) */
 function pickTile(D, rooms, taken, minGap){
+  if(!rooms.length) return null;
   for(let guard=0; guard<80; guard++){
-    const r = rooms[Math.floor(Math.random()*rooms.length)];
-    const x = Math.floor(r.cx - r.w/2 + 1 + Math.random()*(r.w - 2));
-    const z = Math.floor(r.cy - r.h/2 + 1 + Math.random()*(r.h - 2));
+    const r = rooms[gI(0, rooms.length - 1)];
+    const x = Math.floor(r.cx - r.w/2 + 1 + gRaw()*(r.w - 2));
+    const z = Math.floor(r.cy - r.h/2 + 1 + gRaw()*(r.h - 2));
     if(x<1 || z<1 || x>=D.W-1 || z>=D.H-1) continue;
     const c = z*D.W + x;
     if(D.grid[c] !== FLOOR || D.roomId[c] !== r.id || D.doorway[c] || D.lakeMask[c]) continue;
@@ -129,7 +132,7 @@ export function spawnHazards(D, themeKey){
     const p = pickTile(D, combat, traps, 3);
     if(!p) break;
     traps.push({ ...p, x:p.tx - D.W/2 + 0.5, z:p.tz - D.H/2 + 0.5, ti:p.c,
-                 ph:Math.random()*PERIOD, cd:0, vis:0, pcol:-1 });
+                 ph:gF(0, PERIOD), cd:0, vis:0, pcol:-1 });
   }
   plates.count = spikes.count = traps.length;
 
@@ -148,11 +151,15 @@ export function spawnHazards(D, themeKey){
     if(pits[i]) m.position.set(pits[i].x, 0, pits[i].z);
   });
 
-  /* themed hazard */
+  /* themed hazard — suppressed on the teaching floor (floor 1) */
   themeKind = themeKey;
   themed = [];
   themeMeshes.forEach(m=>m.visible = false);
   icicleRing.material.opacity = 0; icicleCone.visible = false; icicle.state = 'idle';
+  if(!floorThemeHazards(run.state.floor)){
+    themeKind = '';
+    return;
+  }
   if(themeKey === 'frost') return;                       // frost is the global icicle controller
   const KINDS = {
     ancient: { n:7, color:0x9b6cf0 }, molten: { n:7, color:0xff7a30 },
@@ -164,18 +171,20 @@ export function spawnHazards(D, themeKey){
     const p = pickTile(D, anyRoom, [...traps, ...pits, ...themed], 5);
     if(!p) break;
     const h = { ...p, x:p.tx - D.W/2 + 0.5, z:p.tz - D.H/2 + 0.5, ti:p.c,
-                cd:0, ph:Math.random()*4, at:-1e9, mesh:themeMeshes[i] };
+                cd:0, ph:gF(0, 4), at:-1e9, mesh:themeMeshes[i] };
     h.mesh.material.color.set(spec.color);
     themed.push(h);
   }
 }
+
+
 
 /* one damage gate for every hazard that can hit the player */
 function hazHit(dmg, t){
   if(t - lastHitAt < PLAYER_CD || dashInvuln(t)) return false;
   lastHitAt = t;
   sfx.hurt();
-  if(run.damage(dmg)) sfx.die();
+  if(run.damage(dmg, 'a hazard')) sfx.die();
   return true;
 }
 
@@ -220,7 +229,7 @@ function updatePits(dt, D, player, pp, t){
     if(d < 1.2) nearAny = true;
     if(d < PIT_R - 0.02 && !airborne(t)){        // over the edge and not jumping
       sfx.boom();
-      hazHit(DMG, t);
+      if(!run.state.mods.featherfall) hazHit(DMG, t);
       pp.x = lastSafe.x; pp.z = lastSafe.z;       // hauled back to safe footing
       return;
     }

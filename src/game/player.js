@@ -18,16 +18,29 @@ const RADIUS = 0.3;   // collision radius, must stay < 0.5 (one tile)
 const DASH_SPEED = 20, DASH_TIME = 0.16, DASH_CD = 0.55, DASH_IFRAME = 0.24, DASH_COST = 1;
 let dashEnd = -1e9, dashCdEnd = -1e9, dashIfrEnd = -1e9, dashX = 0, dashZ = 0;
 let velX = 0, velZ = 0;      // persisted so frozen lakes can carry momentum
+/* Echo Step decoy — taunts foes for 1.5s at dash origin */
+let decoy = null; // { x, z, until }
+export function getDecoy(){ return decoy && decoy.until > 0 ? decoy : null; }
+export function clearDecoy(t){ if(decoy && t >= decoy.until) decoy = null; }
+
 export function tryDash(player, t){
-  if(t < dashCdEnd || t < dashEnd) return false;   // on cooldown / already dashing
-  if(!run.spendMana(DASH_COST)) return false;       // no mana → no dash
-  const rot = player.body.rotation.y;               // dash along current facing
+  if(t < dashCdEnd || t < dashEnd) return false;
+  if(!run.spendMana(DASH_COST)) return false;
+  const rot = player.body.rotation.y;
   dashX = Math.sin(rot); dashZ = Math.cos(rot);
-  dashEnd = t + DASH_TIME;
+  const distMul = run.state.mods.dashDistMul || 1;
+  dashEnd = t + DASH_TIME * distMul;
   dashCdEnd = t + DASH_CD * run.state.mods.dashCdMul;
   dashIfrEnd = t + DASH_IFRAME + run.state.mods.iframeBonus;
+  if(run.state.mods.echoStep){
+    const p = player.root.position;
+    decoy = { x: p.x, z: p.z, until: t + 1.5 };
+  }
   sfx.swing();
   return true;
+}
+export function failedDashNoMana(){
+  return run.state.mana < DASH_COST;
 }
 export const dashInvuln = t => t < dashIfrEnd;      // enemies.js skips contact damage while true
 
@@ -44,8 +57,14 @@ export const airborne = t => t < jumpEnd;
 
 /* -------- crowd-control from hazards: root (frozen in place) and slow -------- */
 let rootUntil = -1e9, slowUntil = -1e9;
-export const applyRoot = until => { rootUntil = Math.max(rootUntil, until); };
-export const applySlow = until => { slowUntil = Math.max(slowUntil, until); };
+export const applyRoot = until => {
+  if(run.state.mods.cleanse) return;
+  rootUntil = Math.max(rootUntil, until);
+};
+export const applySlow = until => {
+  if(run.state.mods.cleanse) return;
+  slowUntil = Math.max(slowUntil, until);
+};
 
 /* -------- game-side obstacle mask (parkour blocks): walkers are blocked,
    a jumping PLAYER passes. Registered per floor by parkour.js. -------- */
@@ -120,9 +139,17 @@ export function createPlayer(scene){
   light.position.y = 1.5;
   root.add(light);
 
+  /* Echo Step decoy — ghost twin left at dash origin */
+  const decoyMesh = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.26, 0.45, 3, 8),
+    new THREE.MeshBasicMaterial({ color:0x6fe8cd, transparent:true, opacity:0.45, toneMapped:false })
+  );
+  decoyMesh.visible = false;
+  scene.add(decoyMesh);
+
   root.visible = false;
   scene.add(root);
-  return { root, body, core };
+  return { root, body, core, decoyMesh };
 }
 
 /* world → tile (inverse of wx = x - W/2 + 0.5: tile x covers [x-W/2, x+1-W/2)) */
@@ -150,6 +177,14 @@ export function spawnPlayer(player, D){
 
 export function updatePlayer(player, dt, D, yaw, t){
   const p = player.root.position;
+  clearDecoy(t);
+  if(player.decoyMesh){
+    if(decoy && t < decoy.until){
+      player.decoyMesh.visible = true;
+      player.decoyMesh.position.set(decoy.x, 0.78, decoy.z);
+      player.decoyMesh.material.opacity = 0.25 + 0.25 * ((decoy.until - t) / 1.5);
+    } else player.decoyMesh.visible = false;
+  }
 
   /* jump arc: a parabola over JUMP_T seconds (movement continues underneath) */
   const jk = 1 - (jumpEnd - t)/JUMP_T;
@@ -186,7 +221,9 @@ export function updatePlayer(player, dt, D, yaw, t){
   if(held.has('KeyD') || held.has('ArrowRight')) { mx += c; mz -= s; }
   if(held.has('KeyA') || held.has('ArrowLeft'))  { mx -= c; mz += s; }
 
-  const speed = SPEED * run.state.mods.moveMul * (t < slowUntil ? 0.5 : 1);
+  const wpn = run.state.weaponKey;
+  const wMove = (wpn === 'blade' ? 1.12 : 1); // blade duelist bonus
+  const speed = SPEED * run.state.mods.moveMul * wMove * (t < slowUntil ? 0.5 : 1);
   const len = Math.hypot(mx, mz) || 1;
   const wantX = (mx/len)*speed, wantZ = (mz/len)*speed;
 

@@ -69,6 +69,11 @@ function noise(t0, dur, out, filterType='bandpass', f0=1000, f1=null, q=1){
 
 /* -------- the effects -------- */
 export const sfx = {
+  /** Soft low growl near mimics — learnable tell, not alarming. */
+  mimicHum(){ if(!live()) return; const t = ctx.currentTime;
+    osc('sine', 55, 48, t, 0.35, env(master, t, 0.35, 0.12));
+    noise(t, 0.25, env(master, t, 0.25, 0.06), 'lowpass', 180, 90, 0.6);
+  },
   swing(){ if(!live()) return; const t = ctx.currentTime;
     noise(t, 0.08, env(master, t, 0.08, 0.5), 'bandpass', 2600, 700, 1.5);
   },

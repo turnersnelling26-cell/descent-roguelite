@@ -4,28 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#07080d" />
-    <meta name="description" content="A deterministic procedural dungeon generator you can watch build itself, room by room. Scatter → separate → Delaunay → MST + loops → carve → theme, rendered live with Three.js." />
-    <title>Dungeon Forge — Procedural Dungeon Generator</title>
+    <meta name="description" content="Descent — a five-floor action roguelite. Fog of war, warded bosses, permadeath, and a deterministic procedural dungeon under every run. Three.js, zero assets." />
+    <title>Descent — a five-floor action roguelite</title>
 
-    <meta name="author" content="Majid Manzarpour" />
-    <link rel="author" href="https://x.com/majidmanzarpour" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%B0%3C/text%3E%3C/svg%3E" />
+    <meta name="author" content="Turner Snelling" />
+    <link rel="author" href="https://github.com/turnersnelling26-cell" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%94%EF%B8%8F%3C/text%3E%3C/svg%3E" />
 
     <!-- Social share (Open Graph + Twitter) -->
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Dungeon Forge — Procedural Dungeon Generator" />
-    <meta property="og:description" content="Watch a dungeon build itself, room by room — scatter, separate, triangulate, carve, theme. A deterministic procgen core rendered live with Three.js." />
-    <meta property="og:url" content="https://procedural-dungeon.netlify.app/" />
-    <meta property="og:image" content="https://procedural-dungeon.netlify.app/og.jpg" />
+    <meta property="og:title" content="Descent — a five-floor action roguelite" />
+    <meta property="og:description" content="Fog of war, warded bosses, permadeath. Every floor is a named procedural dungeon. Conquer five floors — or fall trying." />
+    <meta property="og:url" content="https://github.com/turnersnelling26-cell/descent-roguelite" />
+    <meta property="og:image" content="docs/descent.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="A procedurally generated dungeon of glowing rooms and corridors seen from above in a moody, ember-lit world." />
+    <meta property="og:image:alt" content="Descent — character sheet, fog-of-war minimap, and a warded frost dungeon." />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Dungeon Forge — Procedural Dungeon Generator" />
-    <meta name="twitter:description" content="Watch a dungeon build itself, room by room — scatter, separate, triangulate, carve, theme. A deterministic procgen core rendered live with Three.js." />
-    <meta name="twitter:image" content="https://procedural-dungeon.netlify.app/og.jpg" />
-    <meta name="twitter:site" content="@majidmanzarpour" />
-    <meta name="twitter:creator" content="@majidmanzarpour" />
+    <meta name="twitter:title" content="Descent — a five-floor action roguelite" />
+    <meta name="twitter:description" content="Fog of war, warded bosses, permadeath. Every floor is a named procedural dungeon." />
+    <meta name="twitter:image" content="docs/descent.png" />
+
 
     <link rel="stylesheet" href="./src/ui/styles.css" />
   </head>
@@ -83,11 +82,33 @@
           <div class="kb"><span>Jump — clears pits &amp; parkour blocks</span><b>C</b></div>
           <div class="kb"><span>Pause</span><b>Esc</b></div>
           <div class="kb"><span>Abandon run (press twice)</span><b>R R</b></div>
-          <div class="kb"><span>Lift fog (needs Scrying Orb) · Sound</span><b>F · M</b></div>
+          <div class="kb"><span>Map pulse (Cartographer's Orb) · Sound</span><b>F · M</b></div>
+          <div class="kb"><span>Weapon take / shrine / boon</span><b>1 – 3</b></div>
           <div class="kb"><span>Pan · Zoom · Orbit</span><b>drag · wheel · right-drag</b></div>
           <div class="kb"><span>Generator tools</span><b>`</b></div>
         </div>
-        <p class="tip">Conquer all five floors. Each boss lair is warded — slay foes to shatter the seal, then fell the boss to open the portal (and its shop) down. Red grunts swarm, blue casters snipe, orange chargers ram; spike traps skewer anything standing on them, and frozen lakes are treacherously slick. Dash (Shift) through danger, spend gold at the Wayshop, and claim boons at shrines — the Scrying Orb relic even lets F lift the fog. The Tyrant waits on floor five.</p>
+        <p class="tip">Five floors. Ward the boss lair, spend gold at the Wayshop, claim shrines and level boons. Warm orange chests can bite. The Tyrant waits on floor five.</p>
+      </details>
+
+      <!-- META / STATS -->
+      <details class="sec help" open>
+        <summary>Records &amp; meta</summary>
+        <div class="kbs" id="metaStats"></div>
+        <label class="chk"><input type="checkbox" id="explorerMode"> Explorer mode (−25% damage ◎)</label>
+        <div id="heatToggles" style="display:none;margin-top:8px">
+          <div class="olab">HEAT (after first win)</div>
+          <label class="chk"><input type="checkbox" data-heat="swift"> Swift Foes</label>
+          <label class="chk"><input type="checkbox" data-heat="scarce"> Scarce Shrines</label>
+          <label class="chk"><input type="checkbox" data-heat="hungry"> Hungry Dark</label>
+          <label class="chk"><input type="checkbox" data-heat="iron"> Iron Tyrants</label>
+          <label class="chk"><input type="checkbox" data-heat="fickle"> Fickle Fortune</label>
+        </div>
+        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+          <input id="shareIn" type="text" placeholder="DSC-seed-heat" style="flex:1;min-width:8em" aria-label="Share code">
+          <button class="btn" id="applyShare" type="button">Load</button>
+          <button class="btn" id="playDaily" type="button">Daily</button>
+          <button class="btn" id="resumeRest" type="button" style="display:none">Resume Rest</button>
+        </div>
       </details>
 
       <!-- RELIC CODEX -->
@@ -186,6 +207,9 @@
       <div class="vtitle">DUNGEON&nbsp;CLEARED</div>
       <div class="vname">—</div>
       <div class="vstats">—</div>
+      <div class="vrecord"></div>
+      <div class="vtip"></div>
+      <div class="vunlock"></div>
       <div class="vhint"><b>R</b> forges the next dungeon</div>
     </div>
 
@@ -199,6 +223,36 @@
       </div>
     </div>
 
+    <div id="startWpn" role="dialog" aria-label="Starting weapon">
+      <div class="stitle">⚔ CHOOSE YOUR ARM ⚔</div>
+      <div class="ssub">weapons you have already wielded</div>
+      <div class="scards"></div>
+    </div>
+
+    <div id="boon" role="dialog" aria-label="Level up">
+      <div class="stitle">▲ LEVEL UP ▲</div>
+      <div class="ssub">choose a boon</div>
+      <div class="scards">
+        <button class="scard" data-i="0"><span class="skey">1</span><span class="sn"></span><span class="sd"></span></button>
+        <button class="scard" data-i="1"><span class="skey">2</span><span class="sn"></span><span class="sd"></span></button>
+        <button class="scard" data-i="2"><span class="skey">3</span><span class="sn"></span><span class="sd"></span></button>
+      </div>
+    </div>
+
+    <div id="altar" role="dialog" aria-label="Cursed altar">
+      <div class="stitle">☠ CURSED ALTAR ☠</div>
+      <div class="ssub">power at a price</div>
+      <div class="scards">
+        <button class="scard curse" id="altarTake"><span class="skey">1</span><span class="sn"></span><span class="sd"></span></button>
+        <button class="scard mend" id="altarLeave"><span class="skey">2</span><span class="sn">Walk away</span><span class="sd">Leave the curse</span></button>
+      </div>
+    </div>
+
+    <div id="wpnprompt" role="status">
+      <div class="wn">—</div>
+      <div class="wd">1 take · walk away to keep</div>
+    </div>
+
     <div id="shop" role="dialog" aria-label="Wayshop">
       <div class="stitle">⚖ THE WAYSHOP ⚖</div>
       <div class="ssub">spend before you descend · <span class="sgold">0 gold</span></div>
@@ -208,12 +262,14 @@
         <button class="scard shopcard" data-i="2"><span class="skey">3</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
         <button class="scard shopcard" data-i="3"><span class="skey">4</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
       </div>
+      <button class="btn" id="shopRest" type="button" style="width:100%;margin-top:8px">REST (save &amp; quit)</button>
       <button class="btn primary" id="shopGo">DESCEND&nbsp;▼&nbsp;<span style="opacity:.7;font-weight:400">enter</span></button>
     </div>
 
     <div id="bossbar"><div class="blabel">⚔ BOSS</div><div class="btrack"><i class="bfill"></i></div></div>
 
     <div id="toast" role="status"></div>
+    <div id="floathint" role="status"></div>
     <canvas id="minimap" aria-label="Minimap"></canvas>
     <div id="dmgnums" aria-hidden="true"></div>
     <div id="combo" aria-hidden="true"></div>

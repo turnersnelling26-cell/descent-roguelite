@@ -1,14 +1,17 @@
 /**
- * DUNGEON FORGE — generation core.
+ * DESCENT — dungeon generation core.
  *
- * The complete procedural pipeline (scatter → separate → Delaunay →
- * MST+loops → semantics → carve → rasterize+BFS → decorate) as a pure,
- * engine-agnostic module: no Three.js, no DOM. Runs in the browser or in
- * plain Node, so it can drive any renderer or game layer.
+ * Pure, engine-agnostic procedural pipeline (scatter → separate → Delaunay →
+ * MST+loops → semantics → carve → rasterize+BFS → decorate): no Three.js,
+ * no DOM. Runs in the browser or plain Node.
  *
  * Deterministic: a single mulberry32 stream (seeded once) is threaded
  * through every stage in call order, so any seed rebuilds the exact same
  * dungeon. Do not reorder rng consumption when editing.
+ *
+ * Lineage: pipeline and presentation ideas trace to Dungeon Forge
+ * (Majid Manzarpour, MIT); this module lives inside Descent as its own
+ * game project's generator.
  *
  * Entry point: `generateDungeon(params)` with
  *   params = {

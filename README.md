@@ -1,12 +1,14 @@
 # ⚔️ Descent
 
-**A five-floor action roguelite built on top of [Dungeon Forge](#-credits) — a deterministic procedural dungeon generator.**
+**A five-floor action roguelite.** Fog of war. Warded boss lairs. Permadeath. Every floor is a named, themed dungeon rolled from a seed — and the game remembers what you did after the run ends.
 
-Every floor is a freshly generated dungeon with its own name and theme. Fight through the fog toward a warded boss lair — the seal only shatters once you've slain enough of the floor's foes — fell the boss, spend your gold at the Wayshop inside the portal, and descend. Five floors down, the **Tyrant of the Depths** waits. Die anywhere along the way and the run is over.
+Fight through the mist toward a sealed lair. The ward only shatters once you've slain enough of the floor's foes. Fell the boss, spend gold at the **Wayshop** inside the portal, and descend. Five floors down, the **Tyrant of the Depths** waits — and it remembers the themes of *your* run.
 
-Rendered live with [Three.js](https://threejs.org/); every sound effect is synthesized at runtime; nothing is loaded from disk.
+Die anywhere and the run is over. Rise again with a better goal: best floor, unlocks, and the next tease on the death screen.
 
-![Descent — character sheet, fog-of-war minimap, and a warded frost dungeon](docs/descent.png)
+Rendered live with [Three.js](https://threejs.org/). Every sound is synthesized at runtime. No textures, no models, no audio files — **zero assets**.
+
+![Descent gameplay preview](docs/preview.jpg)
 
 ---
 
@@ -19,59 +21,90 @@ npm run dev        # then open http://localhost:5173
 
 Let the dungeon build itself (or press **Space** to skip the animation), then **WASD** to move. Press **`` ` ``** any time for the generator / dev drawer.
 
-Other scripts:
-
 ```bash
 npm run build          # production build
 npm run preview        # serve the build
-npm run demo:headless  # pure-Node generator demo + determinism/regression checks
+npm run demo:headless  # pure-Node generator demo + determinism / save checks
 ```
+
+---
 
 ## 🎮 Controls
 
 | Action | Key |
 | --- | --- |
 | Move | **W A S D** |
-| Attack *(wand: 1 mana, seeks the nearest foe)* | **Space** |
+| Attack *(wand / rod: 1 mana)* | **Space** |
 | Dash — dodge with brief invulnerability (1 mana) | **Shift** |
 | Jump — clears pits and parkour blocks | **C** |
-| Choose a shrine boon / shop item | **1 – 4** |
+| Take a weapon / shrine / boon / altar / shop | **1 – 4** |
 | Descend from the Wayshop | **Enter** |
 | Pause | **Esc** |
 | Abandon run (press twice) | **R R** |
-| Lift the fog *(requires the Scrying Orb relic)* | **F** |
+| Map pulse *(Cartographer's Orb)* | **F** |
 | Sound | **M** |
 | Pan · zoom · orbit camera | drag · wheel · right-drag |
 | Generator & dev tools | **`` ` ``** |
 
-## ✨ The game
+---
 
-- **A run is five floors.** Each is a deterministic, generated dungeon (per-floor seeds derive from the run seed). Difficulty, enemy count, and hazard density scale with depth. Floor five holds a towering, minion-summoning **mega boss** — fell it and the depths are conquered.
-- **Warded boss lairs.** No b-lining: rune barriers seal every lair entrance until half the floor's foes are slain.
-- **Three enemy archetypes**, each with its own silhouette and habits: horned **grunts** swarm, hooded **casters** hover and snipe, ram-headed **chargers** telegraph then dash. Bosses fight in three escalating phases (stalk → volleys → radial bursts) under a boss HP bar.
-- **A dungeon that fights back.** Self-concealing spike traps skewer players *and* enemies; pits swallow the careless; and every theme has its own menace — rune snares (ancient), fire vents (molten), falling icicles (frost), mana-drinking wisps (grim), spore pods (verdant). Frozen lakes are treacherously slick.
-- **Parkour rooms.** Well-connected junction rooms are fitted with bar-block courses — jump the gaps (or land on top and walk the beams) to claim a vaulter's gold prize.
-- **Weapons & relics.** Find the fast blade, heavy hammer, or mana-fueled wand; attune up to nine stacking relics at shrines (lifesteal, thorns, +damage, faster dash, the fog-lifting Scrying Orb…). A relic codex in the panel tracks what everything does.
-- **The Wayshop.** The descent portal opens a between-floors shop: mend, +max health, +damage, or gamble on a mystery relic.
-- **Juice.** Fog-of-war pixel minimap, floating damage numbers, 10% critical hits, combo-kill gold multipliers, heart drops, mimic chests (1 in 5 bites), dash trails, boss intro splashes, and a low-HP heartbeat you'll learn to dread.
-- **Procedural audio.** Every sound — swings, crits, heartbeats, fanfares — is built from oscillators and filtered noise via the Web Audio API at runtime. No audio files.
+## ✨ What's in the game
+
+### The run
+- **Five floors.** Per-floor seeds derive from the run seed — same seed, same layout and dangers.
+- **Warded boss lairs.** Rune barriers hold until you meet the floor's kill quota (40–55% by depth; Heat can raise it).
+- **Curriculum by floor.** Floor 1 teaches grunts and casters only (spikes + pits). Chargers, bombers, elites, wardens, and summoners unlock deeper. HP scales to a **1.6×** cap — composition carries difficulty, not sponge.
+- **Theme hazards.** Ancient snares, molten vents, frost icicles, grim wisps, verdant spores (off on the teaching floor). Bosses borrow their theme; the **Tyrant** wields two themes from earlier in *your* descent.
+- **Parkour rooms.** Jump the gaps (or walk the beams) for a vaulter's gold prize.
+
+### Combat & builds
+- **Six weapons.** Rusted Blade (mobile crits), Stone Hammer, Ember Wand, plus unlockable **Twin Fangs**, **Warden Spear** (shield-piercing arc), and **Frost Rod** (slow). Near a token, press **1** to take it — your old weapon drops in place. Swaps are never lost.
+- **Level-up boons.** One of three choices (Vitality, Clarity, Swiftness, Precision, Force) instead of invisible +HP only.
+- **Relics & curses.** Two dozen shrine relics (Cartographer's Orb pings the map without killing fog) plus four **cursed altar** options for opt-in risk.
+- **Elites** (floor 3+): Swift, Stony, Vampiric, Volatile — visible risk, better spoils.
+
+### Meta loop
+- **Run memory.** Best floor/time, history (25 runs), unlocks, tallies — one `localStorage` profile (`src/game/save.js` only).
+- **Unlock tree.** Floor 2 → Twin Fangs · Floor 3 → Warden Spear + start-weapon choice · Floor 4 → Frost Rod + cursed altars · First win → Heat + seed sharing.
+- **Death screen.** Rank, killer + counterplay tip, unlock or next tease.
+- **Explorer mode.** −25% damage + free Second Wind per floor; separate best (◎). Unlocks still count.
+- **Heat** (after first win). Swift Foes, Scarce Shrines, Hungry Dark, Iron Tyrants, Fickle Fortune.
+- **Share codes.** `DSC-<seed>-<heat>` — paste into the panel for the same dungeon, offers, and dangers.
+- **Daily seed.** One scored attempt per day.
+- **Rest.** Save at the Wayshop and resume later (one slot; cleared on death).
+
+### Feel
+- Fog-of-war **minimap**, floating damage numbers, crits, combos, heart drops, **mimic tells** (warm tint + hum), dash trails / Echo Step decoy, boss intros, low-HP heartbeat.
+- **Procedural audio** via Web Audio — no sound files.
+
+---
 
 ## 🗂 Project layout
 
-- **`src/gen/dungeon.js`** — the procedural generator, a **pure, engine-agnostic module** (zero imports, runs in plain Node): scatter → separate → Delaunay → MST + loops → semantics → carve → decorate, all threaded through one seeded PRNG. This is the reusable core for future games.
-- **`src/game/*.js`** — the game systems layered on top: `state` (run/character), `player` (move/dash/jump), `enemies` (archetypes, bosses, projectiles), `weapons`, `relics`, `loot`, `shrines`, `shop`, `seal` (boss ward), `hazards` (traps/pits/theme hazards), `parkour`, `fog`, `audio`.
-- **`src/main.js`** — the Three.js renderer, post-processing, minimap, and the game loop that wires it all together.
-- **`scripts/headless-demo.js`** — a pure-Node demo that prints an ASCII map and asserts determinism + pinned regression values (`npm run demo:headless`).
+| Path | Role |
+| --- | --- |
+| `src/gen/dungeon.js` | Pure, engine-agnostic dungeon generator (Node-safe) |
+| `src/game/*.js` | Systems: `state`, `save`, `rng`, `curriculum`, `player`, `enemies`, `weapons`, `relics`, `loot`, `shrines`, `altars`, `boons`, `shop`, `seal`, `hazards`, `parkour`, `fog`, `hints`, `audio` |
+| `src/main.js` | Three.js renderer, post, minimap, game loop, meta UI |
+| `scripts/headless-demo.js` | ASCII map + determinism / save / curriculum assertions |
+| `docs/preview.jpg` | Gameplay screenshot |
+
+---
 
 ## 🌱 Branches
 
-- **`main` / `v1-foundation` / tag `v1.0-foundation`** — the protected v1 foundation: generator + core roguelite loop, kept pristine as a base for future games.
-- **`descent-2`** — the current game described above.
+| Branch | Notes |
+| --- | --- |
+| `main` / `v1-foundation` | Early foundation snapshots |
+| `descent-2` | Five-floor roguelite with hazards, parkour, Wayshop |
+| `descent-3` | **Current** — meta loop, curriculum, choice, onboarding, heat |
 
-## 🙏 Credits
+---
 
-Built on **Dungeon Forge** by **[@majidmanzarpour](https://github.com/majidmanzarpour)** ([live demo](https://procedural-dungeon.netlify.app)) — the deterministic procedural dungeon generator and its painterly Three.js renderer, themes, props, liquids, lights, and particles are his work. Descent adds the game on top: player, combat, enemies, progression, hazards, shops, relics, UI, and audio.
+## 🙏 Acknowledgments
+
+The procedural dungeon core and painterly presentation lineage began as **Dungeon Forge** by [Majid Manzarpour](https://github.com/majidmanzarpour) ([demo](https://procedural-dungeon.netlify.app)). Descent is a separate game project that incorporates and extends that generator under the MIT license.
 
 ## 📄 License
 
-MIT — see [`LICENSE`](LICENSE). Original generator © Majid Manzarpour.
+MIT — see [`LICENSE`](LICENSE).

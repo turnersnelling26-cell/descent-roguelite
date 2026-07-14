@@ -5,36 +5,54 @@
  * generator's spawn markers. Enemies sleep until their tile is revealed by
  * fog AND the player comes near, then chase using the same axis-separated
  * grid collision as the player. Space swipes a radius around the player;
- * contact damages the player; 0 HP respawns at the entrance (fog and kills
- * persist). Lives on the scene, not the level group — survives reforge via
+ * contact damages the player; 0 HP is permadeath (main.js ends the run).
+ * Lives on the scene, not the level group — survives reforge via
  * spawnEnemies() after each build.
  */
 import * as THREE from 'three';
-import { canStand, dashInvuln } from './player.js';
+import { canStand, dashInvuln, applyRoot, applySlow, airborne, getDecoy, clearDecoy } from './player.js';
 import { fogGate } from './fog.js';
 import { sfx } from './audio.js';
 import * as run from './state.js';
 import { FINAL_FLOOR } from './state.js';
 import { WEAPONS } from './weapons.js';
+import { gRaw } from './rng.js';
+import { noteKill } from './save.js';
+import {
+  floorHpMul, floorEliteChance, rollArchetypeForFloor, rollEliteAffix,
+} from './curriculum.js';
 
 const CAP = 256;
-/* three enemy archetypes, keyed by the generator's spawn tier:
-   grunt   — melee swarmer, chases and touches you (tier 1)
-   caster  — kites at range and lobs bolts (tier 2)
-   charger — winds up, then dashes in a straight line (tier 3 / elite) */
-const TIERS = {
-  1: { behavior:'grunt',   scale:0.85, color:0xc4443a, speed:3.4, hp:1, dmg:1, xp:1, gold:1 },
-  2: { behavior:'caster',  scale:0.98, color:0x53a8e6, speed:2.7, hp:2, dmg:1, xp:3, gold:3,
-       fireCd:2.0, fireRange:9, keepDist:5, projSpeed:7, projDmg:1 },
-  3: { behavior:'charger', scale:1.22, color:0xe07a30, speed:2.5, hp:3, dmg:2, xp:5, gold:6,
-       chargeSpeed:17, windup:0.5, chargeTime:0.42, recover:1.1 },
+/* archetypes — curriculum table chooses which appear per floor */
+const ARCH = {
+  grunt:    { behavior:'grunt',    scale:0.85, color:0xc4443a, speed:3.4, hp:1, dmg:1, xp:1, gold:1 },
+  caster:   { behavior:'caster',   scale:0.98, color:0x53a8e6, speed:2.7, hp:2, dmg:1, xp:3, gold:3,
+              fireCd:2.0, fireRange:9, keepDist:5, projSpeed:7, projDmg:1 },
+  charger:  { behavior:'charger',  scale:1.22, color:0xe07a30, speed:2.5, hp:3, dmg:2, xp:5, gold:6,
+              chargeSpeed:17, windup:0.5, chargeTime:0.42, recover:1.1 },
+  bomber:   { behavior:'bomber',   scale:1.05, color:0xe8c040, speed:2.2, hp:2, dmg:2, xp:4, gold:4,
+              swellTime:0.8, blastR:1.6 },
+  warden:   { behavior:'warden',   scale:1.15, color:0x6a8fbf, speed:2.2, hp:4, dmg:1, xp:6, gold:6,
+              shieldDeg:120 },
+  summoner: { behavior:'summoner', scale:0.95, color:0xb06cf0, speed:2.4, hp:2, dmg:0, xp:7, gold:8,
+              keepDist:8, summonCd:4.5, summonCap:3 },
 };
+/* legacy tier keys used by generator-adjacent code / summons */
+const TIERS = { 1: ARCH.grunt, 2: ARCH.caster, 3: ARCH.charger };
 /* boss — one per lair, a multi-phase fight with a HP bar (phases scale off HP) */
 const BOSS_TIER = { behavior:'boss', scale:1.6, color:0xff5040, speed:2.9, hp:12, dmg:2, xp:14, gold:30,
        fireCd:1.7, fireRange:14, projSpeed:8, projDmg:1, burstCd:3.2 };
-/* the mega boss — floor FINAL_FLOOR only: towering, relentless, and it summons */
-const MEGA_TIER = { behavior:'boss', scale:2.1, color:0xff2a18, speed:3.2, hp:26, dmg:3, xp:60, gold:150,
+/* the mega boss — floor FINAL_FLOOR only: towering, summons, dual theme signatures */
+const MEGA_TIER = { behavior:'boss', scale:2.1, color:0xff2a18, speed:3.2, hp:30, dmg:3, xp:60, gold:150,
        fireCd:1.3, fireRange:16, projSpeed:9, projDmg:1, burstCd:2.6, summonCd:5.5 };
+
+const AFFIX = {
+  swift:     { color:0x7fd0ff, spdMul:1.35 },
+  stony:     { color:0x9aa0b0, hpMul:1.60, knockImmune:true },
+  vampiric:  { color:0xc44a6a, vamp:true },
+  volatile:  { color:0xff8a30, deathBurst:true },
+};
+const ELITE_SCALE = 1.15;
 const AGGRO = 6, DEAGGRO = 10, CONTACT = 0.65, E_R = 0.26;
 const HIT_FLASH = 0.15, DEATH_ANIM = 0.25;
 const INVULN = 0.8, HURT_FLASH = 0.25;
@@ -106,12 +124,38 @@ function bossGeo(){     // crowned tyrant: broad capsule + crown + shoulder spik
     xg(new THREE.ConeGeometry(0.09, 0.3, 5),  -0.4,  0.9,  0, 0,0, 1.0, 1),
   ]);
 }
-const BODY_CAPS = { grunt:160, caster:64, charger:64, boss:4 };
+function bomberGeo(){   // fuse pot: squat sphere + short fuse stub
+  return mergeGeos([
+    xg(new THREE.SphereGeometry(0.28, 10, 8), 0, 0.32, 0, 0,0,0, 1),
+    xg(new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), 0, 0.58, 0, 0,0,0, 1),
+    xg(new THREE.SphereGeometry(0.07, 6, 5), 0, 0.72, 0, 0,0,0, 1),
+  ]);
+}
+function wardenGeo(){   // shield wall: tall slab + side guards
+  return mergeGeos([
+    xg(new THREE.BoxGeometry(0.55, 0.7, 0.28), 0, 0.4, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.42, 0.55, 0.1), 0, 0.42, 0.22, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.12, 0.45, 0.22), 0.28, 0.38, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.12, 0.45, 0.22), -0.28, 0.38, 0, 0,0,0, 1),
+  ]);
+}
+function summonerGeo(){ // tall thin staff + floating head
+  return mergeGeos([
+    xg(new THREE.ConeGeometry(0.22, 0.7, 6), 0, 0.35, 0, 0,0,0, 1),
+    xg(new THREE.SphereGeometry(0.12, 8, 6), 0, 0.78, 0, 0,0,0, 1),
+    xg(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), 0.22, 0.45, 0, 0,0,0.3, 1),
+  ]);
+}
+const BODY_CAPS = { grunt:160, caster:64, charger:64, bomber:48, warden:32, summoner:24, boss:4 };
+let nextEid = 1;
 
 export function createEnemies(scene){
   const mat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.55, metalness:0.05 });
   bodies = {};
-  const geos = { grunt:gruntGeo(), caster:casterGeo(), charger:chargerGeo(), boss:bossGeo() };
+  const geos = {
+    grunt:gruntGeo(), caster:casterGeo(), charger:chargerGeo(),
+    bomber:bomberGeo(), warden:wardenGeo(), summoner:summonerGeo(), boss:bossGeo(),
+  };
   for(const k in geos){
     const m = new THREE.InstancedMesh(geos[k], mat, BODY_CAPS[k]);
     m.count = 0;
@@ -160,89 +204,171 @@ export function dismissVictory(){
   document.getElementById('victory')?.classList.remove('show');
 }
 
+function makeEnemyBase(x, z, T, sp, isBoss){
+  return {
+    id: nextEid++, x, z, tier:sp?.tier ?? 1, roomId:sp?.roomId ?? bossRoomId,
+    T, behavior:T.behavior, isBoss,
+    hp:1, maxHp:1, alive:true, gone:false, aggro:false, cd:0, flashAt:-1e9, deadAt:0,
+    mode:'idle', modeT:-1e9, recoverAt:-1e9, fireAt:-1e9, burstAt:-1e9, phase:1,
+    cvx:0, cvz:0, curColor:-1, ti:sp ? (sp.y*D_W_CACHE + sp.x) : 0,
+    ph:Math.random()*Math.PI*2, face:0,
+    elite:false, affix:null, knockImmune:false, spdMul:1, vamp:false, deathBurst:false,
+    summonerId:null, sigs:[], sigAt:-1e9, lastPhase:1,
+  };
+}
+let D_W_CACHE = 0;
+
+function assignElite(e, affixKey){
+  const a = AFFIX[affixKey];
+  if(!a) return;
+  e.elite = true; e.affix = affixKey;
+  e.spdMul = a.spdMul || 1;
+  e.knockImmune = !!a.knockImmune;
+  e.vamp = !!a.vamp;
+  e.deathBurst = !!a.deathBurst;
+  if(a.hpMul){ e.hp = Math.max(1, Math.round(e.hp * a.hpMul)); e.maxHp = e.hp; }
+  e.T = { ...e.T, scale: e.T.scale * ELITE_SCALE, color: a.color,
+          gold: Math.round(e.T.gold * 3), xp: e.T.xp };
+}
+
+function tyrantSigs(){
+  const seen = run.state.themesSeen || [];
+  if(seen.length >= 2) return [seen[0], seen[seen.length - 1]];
+  if(seen.length === 1) return [seen[0], run.state.floorTheme || seen[0]];
+  return [run.state.floorTheme || 'ancient', 'molten'];
+}
+
 export function spawnEnemies(D){
   for(const pr of projActive){ pr.mesh.visible = false; projPool.push(pr); }
   for(const pr of eProjActive){ pr.mesh.visible = false; eProjPool.push(pr); }
   projActive.length = 0; eProjActive.length = 0;
   list = [];
+  D_W_CACHE = D.W;
   const bossRoom = D.rooms[D.boss];
   bossRoomId = bossRoom.id;
   bossPos = { x: bossRoom.cx - D.W/2 + 0.5, z: bossRoom.cy - D.H/2 + 0.5 };
   dungeonName = D.name;
   won = false; introShown = false; dismissVictory();
   hearts.forEach(h=>{ h.live = false; h.mesh.visible = false; });
-  /* enemies grow sturdier with the run's depth (character reset lives in
-     newRun()/nextFloor(), called by main.js before the floor is built) */
-  const hpMul = 1 + (run.state.floor - 1) * 0.3;
+  let hpMul = floorHpMul(run.state.floor);
+  const eliteChance = floorEliteChance(run.state.floor);
+  const eliteRooms = new Set(
+    D.rooms.filter(r=>r.type === 'elite').map(r=>r.id)
+  );
+  const eliteRoomClaimed = new Set();
+  const entId = D.rooms[D.entrance]?.id;
+  /* no spawns in entrance room or tiles adjacent to it (safe first room) */
+  const safeRooms = new Set([entId]);
+  if(entId != null){
+    for(const r of D.rooms){
+      if(r.id === entId) continue;
+      /* adjoining: share an edge via doorway proximity — use room graph if present */
+      if((r.degree != null && r.type === 'entrance')) safeRooms.add(r.id);
+    }
+  }
   let bossPlaced = false;
   for(const sp of D.spawns){
     if(list.length >= CAP) break;
+    if(safeRooms.has(sp.roomId) && sp.roomId !== bossRoomId) continue;
+    /* also skip spawns very near entrance center */
+    const ent = D.rooms[D.entrance];
+    if(ent && Math.abs(sp.x - ent.cx) + Math.abs(sp.y - ent.cy) < 6) continue;
     const bx = sp.x - D.W/2 + 0.5, bz = sp.y - D.H/2 + 0.5;
-    /* stand beside the spawn totem, not inside it (cosmetic — plain Math.random
-       is fine here, generation determinism is untouched) */
+    /* stand beside the spawn totem (cosmetic — unseeded) */
     let x = bx, z = bz;
     for(let a=0; a<6; a++){
       const ang = Math.random()*Math.PI*2, r = 0.35 + Math.random()*0.2;
       const tx = bx + Math.cos(ang)*r, tz = bz + Math.sin(ang)*r;
       if(canStand(D, tx, tz, E_R)){ x = tx; z = tz; break; }
     }
-    /* the boss lair holds exactly one boss (the first spawn there); its other
-       spawns become grunt minions that harry you during the fight. Elsewhere,
-       archetype is a weighted roll (mostly grunts, some casters, few chargers)
-       decoupled from the generator's difficulty tier — that tier instead scales
-       HP, so deeper rooms are tougher without being all-elite. */
     let T, isBoss = false;
     if(sp.roomId === bossRoomId && !bossPlaced){
-      T = run.state.floor >= FINAL_FLOOR ? MEGA_TIER : BOSS_TIER;
+      T = { ...(run.state.floor >= FINAL_FLOOR ? MEGA_TIER : BOSS_TIER) };
+      if(run.state.heatFlags?.iron){
+        T.hp = Math.round(T.hp * 1.25);
+        T.burstCd = (T.burstCd || 3) * 0.75;
+        T.fireCd = (T.fireCd || 1.7) * 0.75;
+        T.ironExtra = true; // extra mid-fight ring at phase changes
+      }
       isBoss = true; bossPlaced = true;
     }
-    else if(sp.roomId === bossRoomId){ T = TIERS[1]; }
-    else { const r = Math.random(); T = r < 0.6 ? TIERS[1] : r < 0.85 ? TIERS[2] : TIERS[3]; }
+    else if(sp.roomId === bossRoomId){ T = ARCH.grunt; }
+    else {
+      const key = rollArchetypeForFloor(run.state.floor, gRaw());
+      T = ARCH[key] || ARCH.grunt;
+    }
     const tierMul = isBoss ? 1 : 1 + (sp.tier - 1) * 0.3;
     const hp = Math.max(1, Math.round(T.hp * hpMul * tierMul));
-    list.push({ x, z, tier:sp.tier, roomId:sp.roomId, T, behavior:T.behavior, isBoss,
-                hp, maxHp:hp, alive:true, gone:false, aggro:false, cd:0, flashAt:-1e9, deadAt:0,
-                mode:'idle', modeT:-1e9, recoverAt:-1e9, fireAt:-1e9, burstAt:-1e9, phase:1,
-                cvx:0, cvz:0, curColor:-1, ti:sp.y*D.W + sp.x, ph:Math.random()*Math.PI*2 });
+    const e = makeEnemyBase(x, z, T, sp, isBoss);
+    e.ti = sp.y * D.W + sp.x;
+    e.hp = hp; e.maxHp = hp;
+    if(run.state.heatFlags?.swift) e.spdMul = (e.spdMul || 1) * 1.15;
+    if(isBoss){
+      e.sigs = run.state.floor >= FINAL_FLOOR
+        ? tyrantSigs()
+        : [run.state.floorTheme || 'ancient'];
+    } else if(T.behavior !== 'grunt' || sp.roomId !== bossRoomId){
+      /* elites: roll chance, or guarantee one per elite room from floor 3 */
+      let makeElite = false;
+      if(eliteChance > 0){
+        if(eliteRooms.has(sp.roomId) && !eliteRoomClaimed.has(sp.roomId)){
+          makeElite = true; eliteRoomClaimed.add(sp.roomId);
+        } else if(gRaw() < eliteChance) makeElite = true;
+      }
+      if(makeElite) assignElite(e, rollEliteAffix(gRaw()));
+    }
+    list.push(e);
   }
   bossExists = bossPlaced;
-  /* assign each enemy a slot in its archetype's InstancedMesh */
-  const counts = { grunt:0, caster:0, charger:0, boss:0 };
+  const counts = { grunt:0, caster:0, charger:0, bomber:0, warden:0, summoner:0, boss:0 };
   for(const e of list){
     e.mkey = e.behavior;
-    if(counts[e.mkey] >= BODY_CAPS[e.mkey]) e.mkey = 'grunt';   // overflow safety
+    if(!BODY_CAPS[e.mkey] || counts[e.mkey] >= BODY_CAPS[e.mkey]) e.mkey = 'grunt';
     e.mi = counts[e.mkey]++;
-    e.face = 0;
   }
-  for(const k in bodies) bodies[k].count = counts[k];
+  for(const k in bodies) bodies[k].count = counts[k] || 0;
   list.forEach(e=>bodies[e.mkey].setColorAt(e.mi, _c.set(e.T.color)));
   for(const k in bodies) if(bodies[k].instanceColor) bodies[k].instanceColor.needsUpdate = true;
 }
 
-/* mid-fight reinforcement (mega boss summons) — grabs a free grunt slot */
-function summonGrunt(x, z, ti, hpMul){
+/* mid-fight reinforcement — grabs a free grunt slot */
+function summonGrunt(x, z, ti, hpMul, opts = {}){
   const m = bodies.grunt;
-  if(m.count >= BODY_CAPS.grunt) return;
-  const T = TIERS[1];
-  const e = { x, z, tier:1, roomId:bossRoomId, T, behavior:'grunt', isBoss:false,
-    hp:Math.max(1, Math.round(T.hp*hpMul)), maxHp:1, alive:true, gone:false, aggro:true,
-    cd:0, flashAt:-1e9, deadAt:0, mode:'idle', modeT:-1e9, recoverAt:-1e9,
-    fireAt:-1e9, burstAt:-1e9, phase:1, cvx:0, cvz:0, curColor:-1, ti,
-    ph:Math.random()*Math.PI*2, mkey:'grunt', mi:m.count, face:0 };
+  if(m.count >= BODY_CAPS.grunt) return null;
+  const T = ARCH.grunt;
+  const hp = Math.max(1, Math.round(T.hp * hpMul));
+  const e = makeEnemyBase(x, z, T, null, false);
+  e.ti = ti; e.hp = hp; e.maxHp = hp; e.aggro = true;
+  e.roomId = opts.roomId ?? bossRoomId;
+  e.summonerId = opts.summonerId ?? null;
+  e.mkey = 'grunt'; e.mi = m.count;
   m.count++;
   m.setColorAt(e.mi, _c.set(T.color));
   if(m.instanceColor) m.instanceColor.needsUpdate = true;
   list.push(e);
+  return e;
 }
 
 /* a "chest" that bites — loot.js calls this when a mimic is sprung */
 export function spawnMimicPack(x, z, ti, D){
-  const hpMul = 1 + (run.state.floor - 1) * 0.3;
+  const hpMul = floorHpMul(run.state.floor);
   for(let k=0; k<3; k++){
     const a = k/3*Math.PI*2 + Math.random(), r = 0.6 + Math.random()*0.4;
     const sx = x + Math.sin(a)*r, sz = z + Math.cos(a)*r;
-    if(canStand(D, sx, sz, E_R)) summonGrunt(sx, sz, ti, hpMul);
+    if(canStand(D, sx, sz, E_R)) summonGrunt(sx, sz, ti, hpMul, { roomId: -1 });
   }
+}
+
+/** 120° front shield — true if the attack comes from the warden's facing cone. */
+function wardenBlocks(e, fromX, fromZ){
+  if(e.behavior !== 'warden' || !e.alive) return false;
+  const dx = fromX - e.x, dz = fromZ - e.z;
+  const ang = Math.atan2(dx, dz);
+  let diff = ang - e.face;
+  while(diff > Math.PI) diff -= Math.PI * 2;
+  while(diff < -Math.PI) diff += Math.PI * 2;
+  const half = ((e.T.shieldDeg || 120) / 2) * (Math.PI / 180);
+  return Math.abs(diff) <= half;
 }
 
 /* hook for floating damage numbers (main.js renders them) */
@@ -250,21 +376,42 @@ let onDamageCb = null;
 export const onEnemyDamage = cb => { onDamageCb = cb; };
 
 /* apply a hit from (fromX,fromZ): damage, knockback along the blow, death/kill */
-function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false){
+function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false, opts={}){
+  if(!opts.pierceShield && wardenBlocks(e, fromX, fromZ)){
+    e.flashAt = t;
+    sfx.swing();
+    return false;
+  }
   e.hp -= dmg; e.flashAt = t;
+  /* execute: finish low HP */
+  if(run.state.mods.execute && e.hp > 0 && e.hp / e.maxHp <= run.state.mods.execute){
+    e.hp = 0;
+  }
   if(onDamageCb) onDamageCb(e.x, e.z, dmg, crit);
   sfx.hit();
-  const d = Math.hypot(e.x - fromX, e.z - fromZ) || 1;
-  const ux = (e.x - fromX)/d, uz = (e.z - fromZ)/d, kx = e.x + ux*knock, kz = e.z + uz*knock;
-  if(canStand(D, kx, e.z, E_R)) e.x = kx;
-  if(canStand(D, e.x, kz, E_R)) e.z = kz;
+  if(!e.knockImmune){
+    const d = Math.hypot(e.x - fromX, e.z - fromZ) || 1;
+    const ux = (e.x - fromX)/d, uz = (e.z - fromZ)/d, kx = e.x + ux*knock, kz = e.z + uz*knock;
+    if(canStand(D, kx, e.z, E_R)) e.x = kx;
+    if(canStand(D, e.x, kz, E_R)) e.z = kz;
+  }
   if(e.hp <= 0){
+    /* Volatile elite: 0.5s telegraph then burst (spec §5.3) */
+    if(e.deathBurst && e.mode !== 'volSwell' && e.mode !== 'dead'){
+      e.deathBurst = false; e.hp = 0.01; e.mode = 'volSwell'; e.modeT = t; e.aggro = false;
+      return true;
+    }
     e.alive = false; e.deadAt = t; e.aggro = false;
     run.addKill(e.T.xp, e.T.gold);
-    if(run.state.mods.lifesteal) run.heal(run.state.mods.lifesteal);   // Vampiric Fang
-    if(!e.isBoss && Math.random() < 0.08) dropHeart(e.x, e.z, t);      // the fallen sometimes leave a heart
+    if(run.state.mods.lifesteal) run.heal(run.state.mods.lifesteal);
+    if(opts.boltKill && run.state.mods.boltMana) run.state.mana = Math.min(run.state.maxMana, run.state.mana + run.state.mods.boltMana);
+    if(e.isBoss) noteKill(run.state.floor >= FINAL_FLOOR ? 'mega' : 'boss');
+    else noteKill(e.behavior);
+    const heartP = run.state.mods.heartChance || 0.08;
+    if(e.elite || (!e.isBoss && Math.random() < heartP)) dropHeart(e.x, e.z, t);
     sfx.kill(); checkWin();
   }
+  return true;
 }
 
 /* -------- heart drops: small pickups that heal 1, fading after 6s -------- */
@@ -307,7 +454,13 @@ function spawnProjectile(player, w, t){
   if(tx !== null){ dx = tx - pp.x; dz = tz - pp.z; const l = Math.hypot(dx,dz)||1; dx/=l; dz/=l; }
   else { const rot = player.body.rotation.y; dx = Math.sin(rot); dz = Math.cos(rot); }
   pr.x = pp.x; pr.z = pp.z; pr.vx = dx*w.projSpeed; pr.vz = dz*w.projSpeed;
-  pr.ttl = w.range / w.projSpeed + 0.1; pr.dmg = w.dmg + run.state.mods.dmgBonus; pr.knock = w.knock;
+  pr.ttl = w.range / w.projSpeed + 0.1;
+  pr.dmg = w.dmg + run.effectiveDmgBonus();
+  pr.knock = w.knock;
+  pr.crit = w.crit || 0.10;
+  pr.pierceShield = !!w.pierceShield;
+  pr.slowOnHit = w.slowOnHit || 0;
+  pr.slowChance = w.slowChance || 0;
   pr.mesh.material.color.set(w.color);
   pr.mesh.position.set(pp.x, 0.9, pp.z); pr.mesh.visible = true;
   projActive.push(pr);
@@ -318,15 +471,20 @@ function updateProjectiles(dt, D, t){
     const pr = projActive[i];
     pr.ttl -= dt;
     const nx = pr.x + pr.vx*dt, nz = pr.z + pr.vz*dt;
-    let done = pr.ttl <= 0 || !canStand(D, nx, nz, 0.08);   // expire on wall / timeout
+    let done = pr.ttl <= 0 || !canStand(D, nx, nz, 0.08);
     if(!done){
       pr.x = nx; pr.z = nz; pr.mesh.position.set(nx, 0.9, nz);
       for(const e of list){
         if(!e.alive) continue;
         if(Math.hypot(e.x - nx, e.z - nz) < PROJ_HIT){
-          const crit = Math.random() < 0.10;
+          const crit = Math.random() < run.effectiveCrit(pr.crit);
           if(crit) sfx.crit();
-          damageEnemy(e, pr.dmg * (crit ? 2 : 1), pr.knock, nx, nz, D, t, crit);
+          damageEnemy(e, pr.dmg * (crit ? 2 : 1), pr.knock, nx, nz, D, t, crit, {
+            pierceShield: pr.pierceShield, boltKill: true,
+          });
+          if(e.alive && pr.slowChance && Math.random() < pr.slowChance){
+            e.slowUntil = t + (pr.slowOnHit || 1.2);
+          }
           done = true; break;
         }
       }
@@ -337,41 +495,69 @@ function updateProjectiles(dt, D, t){
 
 /* environmental damage (spike traps etc.) — hurts enemies too; their deaths
    count as kills, feed relics, and chip the boss ward quota */
-export function damageEnemiesAt(x, z, r, dmg, D, t){
+export function damageEnemiesAt(x, z, r, dmg, D, t, except = null){
   for(const e of list){
-    if(!e.alive) continue;
+    if(!e.alive || e === except) continue;
     if(Math.hypot(e.x - x, e.z - z) < r) damageEnemy(e, dmg, 0.3, x, z, D, t);
   }
 }
 
 export function tryAttack(player, D, t){
   const w = WEAPONS[run.state.weaponKey] || WEAPONS.blade;
-  if(t < attackAt + w.cd * run.state.mods.atkCdMul) return;   // Hunter's Mark speeds this up
+  if(t < attackAt + w.cd * run.state.mods.atkCdMul) return;
   const pp = player.root.position;
   if(w.kind === 'ranged'){
-    if(!run.spendMana(w.mana)) return;          // out of mana → no shot
+    if(!run.spendMana(w.mana)) return;
     attackAt = t; sfx.swing();
     spawnProjectile(player, w, t);
+    noteStrike(null, D, t, pp);
     return;
   }
-  /* melee: radial swipe scaled to the weapon's reach; 10% critical ×2 */
   attackAt = t; ringAt = t; attackRadius = w.radius;
   sfx.swing();
   ring.position.set(pp.x, 0.5, pp.z);
-  const crit = Math.random() < 0.10;
-  const dmg = (w.dmg + run.state.mods.dmgBonus) * (crit ? 2 : 1);   // Focusing Lens + crit
+  const crit = Math.random() < run.effectiveCrit(w.crit);
+  const dmg = (w.dmg + run.effectiveDmgBonus()) * (crit ? 2 : 1);
   if(crit) sfx.crit();
+  const hitList = [];
   for(const e of list){
     if(!e.alive) continue;
-    if(Math.hypot(e.x - pp.x, e.z - pp.z) > w.radius) continue;
-    damageEnemy(e, dmg, w.knock * (crit ? 1.4 : 1), pp.x, pp.z, D, t, crit);
+    const dist = Math.hypot(e.x - pp.x, e.z - pp.z);
+    if(dist > w.radius) continue;
+    /* spear arc: only front cone */
+    if(w.arcDeg){
+      const face = player.body.rotation.y;
+      const ang = Math.atan2(e.x - pp.x, e.z - pp.z);
+      let diff = ang - face;
+      while(diff > Math.PI) diff -= Math.PI*2;
+      while(diff < -Math.PI) diff += Math.PI*2;
+      if(Math.abs(diff) > (w.arcDeg/2) * Math.PI/180) continue;
+    }
+    damageEnemy(e, dmg, w.knock * (crit ? 1.4 : 1), pp.x, pp.z, D, t, crit, {
+      pierceShield: !!w.pierceShield,
+    });
+    hitList.push(e);
+  }
+  noteStrike(hitList, D, t, pp);
+}
+
+function noteStrike(hitList, D, t, pp){
+  run.state.strikeCount = (run.state.strikeCount || 0) + 1;
+  const every = run.state.mods.staticEvery | 0;
+  if(every && run.state.strikeCount % every === 0){
+    /* arc to up to 2 nearby foes */
+    const foes = list.filter(e=>e.alive).sort((a,b)=>
+      Math.hypot(a.x-pp.x,a.z-pp.z) - Math.hypot(b.x-pp.x,b.z-pp.z)).slice(0, 2);
+    for(const e of foes) damageEnemy(e, 1, 0.2, pp.x, pp.z, D, t, false, { pierceShield:true });
   }
 }
 
 /* -------- enemy behaviours -------- */
-function moveToward(e, tx, tz, step, D){        // step<0 = retreat; axis-separated collision
+function moveToward(e, tx, tz, step, D, t=0){   // step<0 = retreat; axis-separated collision
+  const slow = (e.slowUntil && t < e.slowUntil) ? 0.55 : 1;
+  step *= slow;
   const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz) || 1;
-  e.face = Math.atan2(dx, dz);                  // face the target even while retreating
+  e.face = Math.atan2(dx, dz);
   const nx = e.x + (dx/d)*step;
   if(canStand(D, nx, e.z, E_R)) e.x = nx;
   const nz = e.z + (dz/d)*step;
@@ -395,11 +581,21 @@ function fireSpread(e, pp, n, speed, dmg){       // fan of bolts aimed at the pl
 function fireRing(e, n, speed, dmg){             // radial burst in every direction
   for(let i=0;i<n;i++){ const a = i/n*Math.PI*2; fireEnemyBolt(e.x, e.z, Math.sin(a), Math.cos(a), speed, dmg, 0xff8a40); }
 }
+/** Target position: Echo Step decoy steals aggro when present. */
+function huntPos(pp, t){
+  const d = getDecoy();
+  if(d && t < d.until) return { x: d.x, z: d.z };
+  return { x: pp.x, z: pp.z };
+}
+
 function updateCaster(e, dt, D, pp, dist, t){    // kite at range, lob bolts
   const T = e.T;
-  e.face = Math.atan2(pp.x - e.x, pp.z - e.z);
-  if(dist < T.keepDist - 0.4) moveToward(e, pp.x, pp.z, -T.speed*dt, D);
-  else if(dist > T.fireRange) moveToward(e, pp.x, pp.z, T.speed*dt, D);
+  const spd = T.speed * (e.spdMul || 1);
+  const hp = huntPos(pp, t);
+  const hdist = Math.hypot(hp.x - e.x, hp.z - e.z);
+  e.face = Math.atan2(hp.x - e.x, hp.z - e.z);
+  if(hdist < T.keepDist - 0.4) moveToward(e, hp.x, hp.z, -spd*dt, D, t);
+  else if(hdist > T.fireRange) moveToward(e, hp.x, hp.z, spd*dt, D, t);
   if(dist <= T.fireRange && t - e.fireAt > T.fireCd){
     e.fireAt = t;
     const dx = pp.x - e.x, dz = pp.z - e.z, l = Math.hypot(dx, dz) || 1;
@@ -409,22 +605,78 @@ function updateCaster(e, dt, D, pp, dist, t){    // kite at range, lob bolts
 }
 function updateCharger(e, dt, D, pp, dist, t){   // idle → wind-up → dash → recover
   const T = e.T;
+  const spd = T.speed * (e.spdMul || 1);
+  const hp = huntPos(pp, t);
+  const hdist = Math.hypot(hp.x - e.x, hp.z - e.z);
   if(e.mode === 'idle'){
-    if(dist > 0.6) moveToward(e, pp.x, pp.z, T.speed*dt, D);
-    if(dist < 6 && t - e.recoverAt > T.recover){ e.mode = 'wind'; e.modeT = t; }
+    if(hdist > 0.6) moveToward(e, hp.x, hp.z, spd*dt, D, t);
+    if(hdist < 6 && t - e.recoverAt > T.recover){ e.mode = 'wind'; e.modeT = t; }
   } else if(e.mode === 'wind'){
     if(t - e.modeT > T.windup){                  // lock aim, then launch
-      const dx = pp.x - e.x, dz = pp.z - e.z, l = Math.hypot(dx, dz) || 1;
+      const dx = hp.x - e.x, dz = hp.z - e.z, l = Math.hypot(dx, dz) || 1;
       e.cvx = dx/l; e.cvz = dz/l; e.face = Math.atan2(e.cvx, e.cvz);
       e.mode = 'charge'; e.modeT = t;
     }
   } else if(e.mode === 'charge'){
-    const step = T.chargeSpeed*dt;
+    const step = T.chargeSpeed * (e.spdMul || 1) * dt;
     let hit = false;
     const nx = e.x + e.cvx*step; if(canStand(D, nx, e.z, E_R)) e.x = nx; else hit = true;
     const nz = e.z + e.cvz*step; if(canStand(D, e.x, nz, E_R)) e.z = nz; else hit = true;
     if(hit || t - e.modeT > T.chargeTime){ e.mode = 'recover'; e.recoverAt = t; }
   } else if(t - e.recoverAt > T.recover) e.mode = 'idle';
+}
+function detonateBomber(e, pp, D, t){
+  const T = e.T, r = T.blastR || 1.6;
+  damageEnemiesAt(e.x, e.z, r, T.dmg || 2, D, t, e);
+  if(Math.hypot(pp.x - e.x, pp.z - e.z) < r && t - hurtAt > INVULN && !dashInvuln(t)){
+    hurtAt = t; sfx.hurt();
+    if(run.damage(T.dmg || 2, e.behavior === 'bomber' ? 'a bomber' : 'a volatile elite')) sfx.die();
+  }
+  e.alive = false; e.deadAt = t; e.aggro = false;
+  run.addKill(T.xp, T.gold);
+  noteKill(e.behavior === 'bomber' ? 'bomber' : e.behavior);
+  if(e.elite) dropHeart(e.x, e.z, t);
+  sfx.kill(); checkWin();
+}
+
+function updateBomber(e, dt, D, pp, dist, t, player){
+  const T = e.T;
+  const hp = huntPos(pp, t);
+  const hdist = Math.hypot(hp.x - e.x, hp.z - e.z);
+  e.face = Math.atan2(hp.x - e.x, hp.z - e.z);
+  if(e.mode === 'idle'){
+    if(hdist > 1.4) moveToward(e, hp.x, hp.z, T.speed * (e.spdMul || 1) * dt, D, t);
+    if(hdist < 1.9){ e.mode = 'swell'; e.modeT = t; }
+  } else if(e.mode === 'swell'){
+    if(t - e.modeT >= T.swellTime) detonateBomber(e, pp, D, t);
+  }
+}
+function updateWarden(e, dt, D, pp, dist, t){
+  const T = e.T;
+  const hp = huntPos(pp, t);
+  e.face = Math.atan2(hp.x - e.x, hp.z - e.z);
+  const hdist = Math.hypot(hp.x - e.x, hp.z - e.z);
+  if(hdist > 0.55) moveToward(e, hp.x, hp.z, T.speed * (e.spdMul || 1) * dt, D, t);
+}
+function updateSummoner(e, dt, D, pp, dist, t){
+  const T = e.T;
+  const hp = huntPos(pp, t);
+  const hdist = Math.hypot(hp.x - e.x, hp.z - e.z);
+  e.face = Math.atan2(hp.x - e.x, hp.z - e.z);
+  if(hdist < T.keepDist) moveToward(e, hp.x, hp.z, -T.speed * (e.spdMul || 1) * dt, D, t);
+  else if(hdist > T.keepDist + 3) moveToward(e, hp.x, hp.z, T.speed * 0.4 * dt, D, t);
+  const kids = list.filter(x => x.alive && x.summonerId === e.id).length;
+  if(kids < T.summonCap && t - e.fireAt > T.summonCd){
+    e.fireAt = t;
+    const a = Math.random()*Math.PI*2, r = 0.9 + Math.random()*0.4;
+    const sx = e.x + Math.sin(a)*r, sz = e.z + Math.cos(a)*r;
+    if(canStand(D, sx, sz, E_R)){
+      summonGrunt(sx, sz, e.ti, floorHpMul(run.state.floor), {
+        roomId: e.roomId, summonerId: e.id,
+      });
+      sfx.swing();
+    }
+  }
 }
 /* the boss never leaves its lair — every step must land on a lair tile */
 const roomAt = (D, x, z)=>{
@@ -439,8 +691,55 @@ function moveBoss(e, tx, tz, step, D){
   const nz = e.z + (dz/d)*step;
   if(canStand(D, e.x, nz, E_R) && roomAt(D, e.x, nz) === bossRoomId) e.z = nz;
 }
-function updateBoss(e, dt, D, pp, dist, t){      // 3 phases by HP: stalk → volley → burst
+/** Boss borrows theme hazards (inlined to avoid enemies↔hazards cycle). */
+function pulseBossSig(kind, e, pp, t, D, phase){
+  if(kind === 'ancient' && phase >= 2){
+    applyRoot(t + 0.75); sfx.hurt();
+  } else if(kind === 'molten'){
+    const r = 1.4 + phase * 0.25;
+    if(Math.hypot(pp.x - e.x, pp.z - e.z) < r && !airborne(t)
+       && t - hurtAt > INVULN && !dashInvuln(t)){
+      hurtAt = t; sfx.hurt();
+      if(run.damage(1, 'molten vents')) sfx.die();
+    }
+    damageEnemiesAt(e.x, e.z, r, 1, D, t, e);
+    sfx.hit();
+  } else if(kind === 'frost'){
+    /* delayed icicle: mark drop on player next frames via e.icicle */
+    e.icicle = { x: pp.x, z: pp.z, at: t, state: 'warn' };
+  } else if(kind === 'grim'){
+    if(Math.hypot(pp.x - e.x, pp.z - e.z) < 5){
+      run.spendMana(1); applySlow(t + 0.8); sfx.swing();
+    }
+  } else if(kind === 'verdant'){
+    if(Math.hypot(pp.x - e.x, pp.z - e.z) < 1.8 && !airborne(t)
+       && t - hurtAt > INVULN && !dashInvuln(t)){
+      hurtAt = t; sfx.hurt();
+      if(run.damage(1, 'spores')) sfx.die();
+      applySlow(t + 1.0);
+    }
+    damageEnemiesAt(e.x, e.z, 1.8, 1, D, t, e);
+    sfx.kill();
+  }
+}
+function updateBossIcicle(e, pp, t){
+  if(!e.icicle) return;
+  const ic = e.icicle;
+  if(ic.state === 'warn' && t - ic.at >= 0.75){
+    ic.state = 'drop'; ic.at = t;
+  } else if(ic.state === 'drop' && t - ic.at >= 0.2){
+    if(Math.hypot(pp.x - ic.x, pp.z - ic.z) < 0.8 && !airborne(t)
+       && t - hurtAt > INVULN && !dashInvuln(t)){
+      hurtAt = t; sfx.hurt();
+      if(run.damage(1, 'an icicle')) sfx.die();
+    }
+    e.icicle = null;
+  }
+}
+
+function updateBoss(e, dt, D, pp, dist, t, player){  // 3 phases + theme signatures
   const T = e.T, frac = e.hp / e.maxHp;
+  const prevPhase = e.phase;
   e.phase = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
   e.face = Math.atan2(pp.x - e.x, pp.z - e.z);
   const spd = T.speed * (e.phase===3 ? 1.4 : e.phase===2 ? 1.15 : 1);
@@ -454,16 +753,29 @@ function updateBoss(e, dt, D, pp, dist, t){      // 3 phases by HP: stalk → vo
     e.burstAt = t;
     fireRing(e, 12, T.projSpeed*0.8, T.projDmg);
   }
+  /* theme signatures: pulse on cadence; verdant also on phase change */
+  const sigs = e.sigs && e.sigs.length ? e.sigs : [run.state.floorTheme || 'ancient'];
+  const sigCd = e.phase >= 3 ? 2.4 : e.phase >= 2 ? 3.2 : 4.5;
+  if(t - e.sigAt > sigCd){
+    e.sigAt = t;
+    const kind = sigs[Math.floor(Math.random() * sigs.length)];
+    pulseBossSig(kind, e, pp, t, D, e.phase);
+  }
+  if(e.phase > prevPhase){
+    if(sigs.includes('verdant')) pulseBossSig('verdant', e, pp, t, D, e.phase);
+    if(T.ironExtra) fireRing(e, 10, T.projSpeed * 0.85, T.projDmg); // Iron Tyrants extra phase behavior
+  }
   /* the mega boss (final floor) calls reinforcements from phase 2 on */
   if(T.summonCd && e.phase >= 2 && t - (e.summonAt ?? -1e9) > T.summonCd){
     e.summonAt = t;
-    const hpMul = 1 + (run.state.floor - 1) * 0.3;
+    const hpMul = floorHpMul(run.state.floor);
     for(let k=0; k<2; k++){
       const a = Math.random()*Math.PI*2, r = 1.6 + Math.random();
       const sx = e.x + Math.sin(a)*r, sz = e.z + Math.cos(a)*r;
       if(canStand(D, sx, sz, E_R)) summonGrunt(sx, sz, e.ti, hpMul);
     }
   }
+  updateBossIcicle(e, pp, t);
 }
 function updateEnemyProjectiles(dt, D, player, t){
   const pp = player.root.position;
@@ -478,7 +790,7 @@ function updateEnemyProjectiles(dt, D, player, t){
         done = true;
         if(t - hurtAt > INVULN && !dashInvuln(t)){        // dash i-frames dodge bolts too
           hurtAt = t; sfx.hurt();
-          if(run.damage(pr.dmg)) sfx.die();
+          if(run.damage(pr.dmg, 'an enemy bolt')) sfx.die();
         }
       }
     }
@@ -513,15 +825,36 @@ export function updateEnemies(dt, D, player, t){
   if(!list.length){ updateBossBar(t); return; }
   const pp = player.root.position;
   let colorsDirty = false;
+  clearDecoy(t);
 
-  /* player hurt flash / restore */
+  /* player hurt flash / stone-skin shimmer / restore */
   const pm = player.body.material;
+  const skinReady = run.state.mods.stoneSkinCd &&
+    ((typeof performance !== 'undefined' ? performance.now()/1000 : t) >= (run.state.stoneSkinReadyAt || 0));
   if(t - hurtAt < HURT_FLASH){ pm.emissive.set(0xff3020); pm.emissiveIntensity = 1.2; }
+  else if(skinReady){ pm.emissive.set(0xc0d0ff); pm.emissiveIntensity = 0.85 + 0.25*Math.sin(t*8); }
   else { pm.emissive.set(0x3fd0bb); pm.emissiveIntensity = 0.55; }
 
   for(let i=0; i<list.length; i++){
     const e = list[i];
     if(e.gone) continue;
+
+    /* volatile death telegraph */
+    if(e.mode === 'volSwell'){
+      if(t - e.modeT >= 0.5){
+        e.mode = 'dead';
+        damageEnemiesAt(e.x, e.z, 1.5, 2, D, t, e);
+        if(Math.hypot(pp.x - e.x, pp.z - e.z) < 1.5 && t - hurtAt > INVULN && !dashInvuln(t)){
+          hurtAt = t; sfx.hurt();
+          if(run.damage(2, 'a volatile elite')) sfx.die();
+        }
+        e.alive = false; e.deadAt = t;
+        run.addKill(e.T.xp, e.T.gold);
+        noteKill(e.behavior);
+        dropHeart(e.x, e.z, t);
+        sfx.kill(); checkWin();
+      }
+    }
 
     if(!e.alive){                       // death shrink, then final zero write
       const k = (t - e.deadAt) / DEATH_ANIM;
@@ -537,59 +870,87 @@ export function updateEnemies(dt, D, player, t){
     const dist = Math.hypot(pp.x - e.x, pp.z - e.z);
 
     if(g >= 0.99){
-      const aggroR = e.isBoss ? 12 : (e.behavior==='caster' ? 8 : AGGRO);
+      const aggroR = e.isBoss ? 12
+        : (e.behavior==='caster' || e.behavior==='summoner' ? 9 : AGGRO);
       if(dist < aggroR) e.aggro = true;
       else if(dist > aggroR + 4) e.aggro = false;
 
-      if(e.aggro){                      // archetype-specific movement + attacks
+      if(e.mode === 'volSwell'){ /* rooted, glowing */ }
+      else if(e.aggro){                      // archetype-specific movement + attacks
         if(e.behavior === 'caster')       updateCaster(e, dt, D, pp, dist, t);
         else if(e.behavior === 'charger') updateCharger(e, dt, D, pp, dist, t);
-        else if(e.behavior === 'boss')    updateBoss(e, dt, D, pp, dist, t);
-        else if(dist > 0.45)              moveToward(e, pp.x, pp.z, e.T.speed*dt, D);  // grunt
+        else if(e.behavior === 'bomber')  updateBomber(e, dt, D, pp, dist, t, player);
+        else if(e.behavior === 'warden')  updateWarden(e, dt, D, pp, dist, t);
+        else if(e.behavior === 'summoner') updateSummoner(e, dt, D, pp, dist, t);
+        else if(e.behavior === 'boss')    updateBoss(e, dt, D, pp, dist, t, player);
+        else {
+          const hp = huntPos(pp, t);
+          const hd = Math.hypot(hp.x - e.x, hp.z - e.z);
+          if(hd > 0.45) moveToward(e, hp.x, hp.z, e.T.speed*(e.spdMul||1)*dt, D, t);
+        }
       }
 
       /* contact damage (per-enemy cooldown + player invulnerability) */
       e.cd -= dt;
-      if(dist < CONTACT && e.cd <= 0 && t - hurtAt > INVULN && !dashInvuln(t)){
+      const contactDmg = e.T.dmg || 0;
+      if(contactDmg > 0 && dist < CONTACT && e.cd <= 0 && t - hurtAt > INVULN && !dashInvuln(t)
+         && e.mode !== 'swell' && e.behavior !== 'bomber'){
         e.cd = 0.8; hurtAt = t;
         sfx.hurt();
-        const dead = run.damage(e.T.dmg);
-        if(run.state.mods.thorns && e.alive) damageEnemy(e, run.state.mods.thorns, 0.35, pp.x, pp.z, D, t);  // Bramble Heart
-        const d = dist || 1;            // shove the player back
+        const cause = e.isBoss
+          ? (run.state.floor >= FINAL_FLOOR ? 'the Tyrant' : 'the boss')
+          : ('a ' + e.behavior);
+        let dmgHit = contactDmg;
+        if(run.state.mods.bulwark && (e.isBoss || e.behavior === 'charger'))
+          dmgHit = Math.max(1, dmgHit - 1);
+        const dead = run.damage(dmgHit, cause);
+        if(e.vamp && e.alive){ e.hp = Math.min(e.maxHp, e.hp + 1); }
+        if(run.state.mods.thorns && e.alive) damageEnemy(e, run.state.mods.thorns, 0.35, pp.x, pp.z, D, t);
+        const d = dist || 1;
         const px = pp.x + (pp.x - e.x)/d * 0.5, pz = pp.z + (pp.z - e.z)/d * 0.5;
         if(canStand(D, px, pp.z)) pp.x = px;
         if(canStand(D, pp.x, pz)) pp.z = pz;
-        if(dead){ sfx.die(); return; }   // run ends — main.js shows the summary off state.dead
+        if(dead){ sfx.die(); return; }
       }
     }
 
-    /* colour: hit-flash white; charger telegraphs its wind-up and glows mid-dash */
+    /* colour: hit-flash / telegraphs / elite glow */
     let col;
     if(t - e.flashAt < HIT_FLASH)                     col = 0xffffff;
     else if(e.behavior==='charger' && e.mode==='wind')   col = 0xfff0c0;
     else if(e.behavior==='charger' && e.mode==='charge') col = 0xffd27a;
+    else if(e.behavior==='bomber' && e.mode==='swell')   col = 0xfff06a;
+    else if(e.mode==='volSwell')                          col = 0xffaa40;
     else                                              col = e.T.color;
     if(col !== e.curColor){ bodies[e.mkey].setColorAt(e.mi, _c.set(col)); e.curColor = col; colorsDirty = true; }
 
     /* per-archetype idle/attack animation */
     let y = 0, rx = 0, rz = 0, face = e.face;
-    if(e.behavior === 'caster'){
-      y = 0.16 + 0.07*Math.sin(t*2.6 + e.ph);            // hover, always afloat
+    let sc = e.T.scale;
+    if(e.behavior === 'caster' || e.behavior === 'summoner'){
+      y = 0.16 + 0.07*Math.sin(t*2.6 + e.ph);
     } else if(e.behavior === 'charger'){
       y = 0.02*Math.sin(t*3 + e.ph);
-      if(e.mode === 'wind'){ face += 0.1*Math.sin(t*38); rx = -0.12; }   // trembling wind-up
-      else if(e.mode === 'charge') rx = 0.32;                            // head-down ram
+      if(e.mode === 'wind'){ face += 0.1*Math.sin(t*38); rx = -0.12; }
+      else if(e.mode === 'charge') rx = 0.32;
       else if(e.mode === 'recover') rx = -0.1;
+    } else if((e.behavior === 'bomber' && e.mode === 'swell') || e.mode === 'volSwell'){
+      const dur = e.mode === 'volSwell' ? 0.5 : (e.T.swellTime || 0.8);
+      const k = Math.min(1, (t - e.modeT) / dur);
+      sc = e.T.scale * (1 + 0.55 * k);
+      y = 0.05 * k;
     } else if(e.behavior === 'boss'){
       y = 0.05*Math.sin(t*3.4 + e.ph);
-      if(e.phase === 3) rz = 0.06*Math.sin(t*10);        // enraged shudder
+      if(e.phase === 3) rz = 0.06*Math.sin(t*10);
     } else {
       y = e.aggro ? 0.07*Math.sin(t*9 + e.ph) : 0.03*Math.sin(t*2.2 + e.ph);
-      if(e.aggro) rz = 0.08*Math.sin(t*9 + e.ph);        // scurrying waddle
+      if(e.aggro) rz = 0.08*Math.sin(t*9 + e.ph);
     }
+    /* swift elite trail: slight extra bob */
+    if(e.affix === 'swift') y += 0.04*Math.sin(t*14 + e.ph);
     _p.set(e.x, y, e.z);
     _q.setFromEuler(_E.set(rx, face, rz));
-    _s.setScalar(Math.max(e.T.scale * g, 0.0001));
+    _s.setScalar(Math.max(sc * g, 0.0001));
     _m.compose(_p,_q,_s); bodies[e.mkey].setMatrixAt(e.mi,_m);
   }
 

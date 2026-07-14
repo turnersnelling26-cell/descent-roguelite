@@ -1,20 +1,29 @@
 {
-  "name": "dungeon-forge",
-  "version": "1.0.0",
-  "description": "A deterministic procedural dungeon generator you can watch build itself, room by room — scatter, separate, Delaunay-triangulate, MST + loops, carve, and theme, rendered live with Three.js.",
+  "name": "descent-roguelite",
+  "version": "3.0.0-dev",
+  "description": "Descent — a five-floor action roguelite with fog-of-war, warded bosses, and a deterministic procedural dungeon under every run. Three.js, zero assets.",
   "type": "module",
-  "author": "Majid Manzarpour (https://x.com/majidmanzarpour)",
-  "homepage": "https://procedural-dungeon.netlify.app",
+  "author": "Turner Snelling (https://github.com/turnersnelling26-cell)",
+  "homepage": "https://github.com/turnersnelling26-cell/descent-roguelite",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/turnersnelling26-cell/descent-roguelite.git"
+  },
+  "bugs": {
+    "url": "https://github.com/turnersnelling26-cell/descent-roguelite/issues"
+  },
   "license": "MIT",
   "keywords": [
+    "descent",
+    "roguelite",
+    "roguelike",
     "three.js",
     "procedural-generation",
     "procgen",
-    "dungeon-generator",
-    "delaunay",
-    "roguelike",
+    "dungeon",
     "webgl",
-    "gamedev"
+    "gamedev",
+    "browser-game"
   ],
   "scripts": {
     "dev": "vite",

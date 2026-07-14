@@ -13,6 +13,8 @@ import { RELICS, RELIC_KEYS } from './relics.js';
 import { fogGate } from './fog.js';
 import { sfx } from './audio.js';
 import { showToast } from './loot.js';
+import { gShuffle } from './rng.js';
+import { noteShrine } from './save.js';
 
 const RADIUS = 1.6;
 let shrines = [], active = null;
@@ -20,10 +22,14 @@ let shrines = [], active = null;
 export function spawnShrines(D){
   active = null; hideOverlay();
   const owned = new Set(run.state.relics.map(r=>r.key));
-  shrines = D.props.filter(p=>p.kind==='shrineCrystal').map(p=>{
-    const pool = RELIC_KEYS.filter(k=>!owned.has(k));       // shuffle for two distinct offers
-    for(let j=pool.length-1; j>0; j--){ const k = Math.floor(Math.random()*(j+1)); [pool[j],pool[k]] = [pool[k],pool[j]]; }
-    return { x:p.x - D.W/2 + 0.5, z:p.y - D.H/2 + 0.5, ti:p.y*D.W + p.x, used:false, offers:pool.slice(0,2) };
+  let props = D.props.filter(p=>p.kind==='shrineCrystal');
+  /* heat: scarce shrines — drop one per floor */
+  if(run.state.heatFlags?.scarce && props.length > 1) props = props.slice(0, props.length - 1);
+  const nOffer = run.state.mods.shrineTriple ? 3 : 2;
+  shrines = props.map(p=>{
+    const pool = RELIC_KEYS.filter(k=>!owned.has(k));
+    gShuffle(pool);
+    return { x:p.x - D.W/2 + 0.5, z:p.y - D.H/2 + 0.5, ti:p.y*D.W + p.x, used:false, offers:pool.slice(0, nOffer) };
   });
 }
 
@@ -43,25 +49,37 @@ export const shrineActive = ()=> !!active;
 export function selectShrine(i){
   if(!active) return;
   const s = active;
-  if(i === 2){                                 // Mend
+  const triple = !!run.state.mods.shrineTriple;
+  if(!triple && i === 2){
     run.heal(run.state.maxHp);
     showToast('The shrine mends your wounds.');
   } else {
     const key = s.offers[i];
-    if(!key) return;                           // empty card (relic pool exhausted)
+    if(!key) return;
     if(run.acquireRelic(key)) showToast('Attuned — ' + RELICS[key].name);
   }
-  s.used = true; active = null; hideOverlay(); sfx.pickup();
+  s.used = true; active = null; hideOverlay(); noteShrine(); sfx.pickup();
 }
 
 function showOverlay(s){
   const el = document.getElementById('shrine');
   if(!el) return;
   const cards = el.querySelectorAll('.scard');
-  [0,1].forEach(i=>{
-    const key = s.offers[i], card = cards[i];
+  const triple = !!run.state.mods.shrineTriple;
+  [0,1,2].forEach(i=>{
+    const card = cards[i];
+    if(!card) return;
+    if(!triple && i === 2){
+      card.style.display = '';
+      card.classList.add('mend');
+      card.querySelector('.sn').textContent = 'Mend';
+      card.querySelector('.sd').textContent = 'Restore all health';
+      return;
+    }
+    const key = s.offers[i];
     if(key){
       card.style.display = '';
+      card.classList.toggle('mend', false);
       card.querySelector('.sn').textContent = RELICS[key].name;
       card.querySelector('.sd').textContent = RELICS[key].desc;
     } else card.style.display = 'none';

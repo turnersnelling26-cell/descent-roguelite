@@ -14,6 +14,8 @@ import { fogSeen, fogGate } from './fog.js';
 import { setObstacleMask } from './player.js';
 import { showToast } from './loot.js';
 import { sfx } from './audio.js';
+import { gI } from './rng.js';
+import { noteParkour } from './save.js';
 
 const CAP = 90, MAX_ROOMS = 2;
 
@@ -56,7 +58,8 @@ export function spawnParkour(D){
     const z0 = Math.ceil(r.cy - r.h/2) + 1, z1 = Math.floor(r.cy + r.h/2) - 1;
     /* bar rows every 3rd row, each with a single random gap — jump or weave */
     for(let z = z0 + 1; z <= z1 - 1; z += 3){
-      const gap = x0 + 1 + Math.floor(Math.random() * Math.max(1, x1 - x0 - 1));
+      const span = Math.max(1, x1 - x0 - 1);
+      const gap = x0 + 1 + gI(0, span - 1);
       for(let x = x0; x <= x1; x++){
         if(x === gap || placed.length >= CAP) continue;
         const c = z*D.W + x;
@@ -101,6 +104,7 @@ export function updateParkour(dt, D, player, t){
       const gold = 25 + run.state.floor * 5;
       run.state.gold += gold;
       run.renderHud();
+      noteParkour();
       showToast('Vaulter’s prize — +' + gold + ' gold!');
       sfx.win();
     }

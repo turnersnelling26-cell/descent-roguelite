@@ -274,7 +274,43 @@
   #victory.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
   #victory .vtitle{color:var(--gold,#d9a441);font-size:13px;letter-spacing:.4em;margin-bottom:8px}
   #victory .vname{font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#e8eaf2;margin-bottom:10px}
-  #victory .vstats{color:#8d93a8;font-size:11px;letter-spacing:.06em;margin-bottom:12px}
+  #victory .vstats{color:#8d93a8;font-size:11px;letter-spacing:.06em;margin-bottom:8px}
+  #victory .vrecord{color:#6a7188;font-size:11px;letter-spacing:.05em;margin-bottom:6px}
+  #victory .vrecord.best{color:var(--gold,#d9a441)}
+  #victory .vtip{color:#a89070;font-size:10px;letter-spacing:.03em;margin-bottom:8px;max-width:30em;margin-left:auto;margin-right:auto;line-height:1.45}
+  #victory .vunlock{color:#7a9ec4;font-size:10px;letter-spacing:.04em;margin-bottom:12px;max-width:28em;margin-left:auto;margin-right:auto;line-height:1.45}
+  #startWpn,#boon,#altar{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%) scale(.96);z-index:9;
+    text-align:center;padding:22px 28px;background:#0a0c12ee;border:1px solid #2c3042;border-radius:14px;
+    opacity:0;pointer-events:none;transition:.18s}
+  #startWpn.show,#boon.show,#altar.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
+  #startWpn .stitle,#boon .stitle,#altar .stitle{color:var(--gold,#d9a441);letter-spacing:.35em;font-size:12px;margin-bottom:6px}
+  #altar .stitle{color:#e07090}
+  #startWpn .ssub,#boon .ssub,#altar .ssub{color:#6a7188;font-size:10px;margin-bottom:12px}
+  #startWpn .scards,#boon .scards,#altar .scards{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  #startWpn .scard,#boon .scard,#altar .scard{
+    width:140px;padding:12px 10px;background:#12141f;border:1px solid #2c3042;border-radius:10px;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:6px;color:inherit}
+  #startWpn .scard:hover,#boon .scard:hover,#altar .scard:hover{background:#1a1e2c;border-color:#5a4f8a}
+  #startWpn .skey,#boon .skey,#altar .skey{width:20px;height:20px;line-height:20px;border-radius:5px;background:#0d0f16;
+    font-size:11px;color:#8d93a8}
+  #startWpn .sn,#boon .sn,#altar .sn{font-family:var(--serif);font-size:15px;color:#eef0f6}
+  #startWpn .sd,#boon .sd,#altar .sd{font-size:10.5px;color:#9aa0b4;line-height:1.35}
+  #altar .scard.curse{border-color:#6a2840}
+  #wpnprompt{position:fixed;bottom:18%;left:50%;transform:translateX(-50%);z-index:7;
+    background:#0a0c12dd;border:1px solid #2c3042;border-radius:10px;padding:10px 18px;text-align:center;
+    opacity:0;pointer-events:none;transition:.15s}
+  #wpnprompt.show{opacity:1}
+  #wpnprompt .wn{color:#e8eaf2;font-size:13px;margin-bottom:4px}
+  #wpnprompt .wd{color:#6a7188;font-size:10px}
+  #floathint{position:fixed;top:22%;left:50%;transform:translateX(-50%);z-index:7;
+    color:#c8d0e8;font-size:13px;letter-spacing:.06em;background:#0a0c12cc;padding:8px 16px;border-radius:8px;
+    opacity:0;transition:.2s;pointer-events:none}
+  #floathint.show{opacity:1}
+  .pill.curse{background:#4a1830;color:#f0a0b8}
+  #codex .kb.curse span{color:#e07090}
+  label.chk{display:block;font-size:10px;color:#8d93a8;margin:3px 0;cursor:pointer}
+  label.chk input{margin-right:6px}
+  #barMana.flash{box-shadow:0 0 12px #5af;outline:1px solid #7cf}
   #victory .vhint{color:#525871;font-size:10px;letter-spacing:.06em}
   #victory .vhint b{color:#8d93a8;font-weight:400}
   /* Collapse control — a real button with a comfortable hit area, present on
