@@ -22,8 +22,12 @@ import { fogReset, fogSuspend, fogMark, fogGate, fogSeen, fogWrite,
 import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory } from './game/enemies.js';
 import { createLoot, spawnLoot, updateLoot, lootStats, showToast } from './game/loot.js';
 import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } from './game/shrines.js';
+import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
+import { createHazards, spawnHazards, updateHazards, hazardStats } from './game/hazards.js';
+import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats } from './game/shop.js';
 import { sfx, ensureAudio, setMuted, audioStats } from './game/audio.js';
 import * as run from './game/state.js';
+import { FINAL_FLOOR } from './game/state.js';
 
 /* ================================================================
    DUNGEON FORGE — procedural dungeon generator core + showcase
@@ -60,6 +64,8 @@ scene.fog = new THREE.FogExp2(canvasBg, 0.002);
 const player = createPlayer(scene);
 createEnemies(scene);
 createLoot(scene);
+createSeal(scene);
+createHazards(scene);
 window.__player = player;   // exposed for automated tests
 window.__fog = fogStats;
 window.__enemies = enemyStats;
@@ -69,6 +75,11 @@ window.__state = run.snapshot;
 window.__hurt = run.damage;                 // test hook: apply damage / force death
 window.__heal = run.heal;                    // test hook: restore HP
 window.__shrines = shrineStats;
+window.__seal = sealStats;
+window.__hazards = hazardStats;
+window.__shop = shopStats;
+/* test hook: jump straight to floor n (descend path, character preserved) */
+window.__forgeFloor = n => { run.state.floor = n - 1; forge(false, false); };
 
 /* descent portal — a persistent object (survives disposeLevel/reforge like the
    player). It appears at the boss lair once the boss falls; stepping into it
@@ -366,7 +377,8 @@ matSkirt.toneMapped = false;
 const liquidMat = new THREE.ShaderMaterial({
   transparent:true, depthWrite:false,
   uniforms:{ uTime:{value:0}, uMode:{value:0}, uGlow:{value:1}, uOp:{value:1},
-             uColA:{value:new THREE.Color(0x000000)}, uColB:{value:new THREE.Color(0xffffff)} },
+             uColA:{value:new THREE.Color(0x000000)}, uColB:{value:new THREE.Color(0xffffff)},
+             uFog:{value:null}, uFogSize:{value:new THREE.Vector2(1,1)}, uFogOn:{value:0} },
   vertexShader:`
     attribute vec2 aE;
     attribute vec4 aM;
@@ -380,6 +392,9 @@ const liquidMat = new THREE.ShaderMaterial({
     varying vec4 vM;
     uniform float uTime, uMode, uGlow, uOp;
     uniform vec3 uColA, uColB;
+    uniform sampler2D uFog;
+    uniform vec2 uFogSize;
+    uniform float uFogOn;
     float h21(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
     float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
       float a=h21(i), b=h21(i+vec2(1,0)), c=h21(i+vec2(0,1)), d=h21(i+vec2(1,1));
@@ -425,9 +440,30 @@ const liquidMat = new THREE.ShaderMaterial({
       else if(uMode < 1.5) col *= (1.0 - 0.25*e);
       else if(uMode < 2.5) col *= (1.0 - 0.4*e);
       else                 aOut *= (1.0 - 0.55*e);
-      gl_FragColor = vec4(col * (0.5 + uGlow), aOut);
+      /* fog of war: liquids are single merged meshes spanning rooms, so gate
+         them per-fragment off a tile-resolution fog texture (fixes frozen
+         lakes shining through unexplored fog) */
+      float fg = mix(1.0, texture2D(uFog, (vP + uFogSize*0.5) / uFogSize).r, uFogOn);
+      gl_FragColor = vec4(col * (0.5 + uGlow) * fg, aOut * fg);
     }`
 });
+/* tile-resolution fog texture for the liquid shader, rebuilt per forge */
+let fogTex = null;
+function ensureFogTex(){
+  if(fogTex && fogTex.image.width===D.W && fogTex.image.height===D.H) return;
+  if(fogTex) fogTex.dispose();
+  fogTex = new THREE.DataTexture(new Uint8Array(D.W*D.H), D.W, D.H, THREE.RedFormat, THREE.UnsignedByteType);
+  fogTex.magFilter = THREE.LinearFilter; fogTex.minFilter = THREE.LinearFilter;
+  liquidMat.uniforms.uFog.value = fogTex;
+  liquidMat.uniforms.uFogSize.value.set(D.W, D.H);
+}
+function updateLiquidFog(t){
+  if(!D) return;
+  ensureFogTex();
+  const data = fogTex.image.data;
+  for(let i=0; i<data.length; i++) data[i] = fogGate(i, t)*255;
+  fogTex.needsUpdate = true;
+}
 
 /* ambient particle field: dust / embers / snow / wisps / spores (GPU) */
 const partMat = new THREE.ShaderMaterial({
@@ -1394,6 +1430,8 @@ let lastPlayerTile = -1, lastStepAt = -1;
 function fogRefresh(){
   for(const k in meshes) if(!FOG_LIVE.has(k)) fogWrite(meshes[k], elapsed);
   applyObjectVis();                     // hero meshes / shafts follow fogSeen
+  updateLiquidFog(elapsed);
+  liquidMat.uniforms.uFogOn.value = el.tFog.checked ? 1 : 0;
   fogWriteUntil = elapsed + 0.6;
 }
 function applyFogToggle(){
@@ -1409,6 +1447,9 @@ function finishAnim(){
   spawnEnemies(D);
   spawnLoot(D);
   spawnShrines(D);
+  spawnHazards(D);
+  { const es = enemyStats();                       // ward quota = foes outside the lair
+    spawnSeal(D, es.total - es.bossFoes.length); }
   fogReset(D, elapsed);
   lastPlayerTile = -1;
   fogMark(D, player.root.position.x, player.root.position.z, elapsed);
@@ -1428,7 +1469,8 @@ function hidePortal(){ portalOpen = false; portal.g.visible = false; portal.ligh
 function descend(){
   if(!portalOpen) return;
   hidePortal();
-  forge(true, false);            // not fresh → nextFloor(), keep the character
+  /* the portal holds the Wayshop — spend gold, then drop to the next floor */
+  openShop(()=>forge(true, false));   // not fresh → nextFloor(), keep the character
 }
 function updatePortal(t){
   portal.g.rotation.y = t*0.8;
@@ -1439,19 +1481,36 @@ function updatePortal(t){
   const pp = player.root.position, pos = portal.g.position;
   if(Math.hypot(pp.x - pos.x, pp.z - pos.z) < 1.05) descend();
 }
+function runTime(){
+  const secs = Math.max(0, elapsed - runStartElapsed);
+  return Math.floor(secs/60) + 'm ' + String(Math.floor(secs%60)).padStart(2,'0') + 's';
+}
 function showGameOver(){
   gameOver = true;
   hidePortal();
   const v = document.getElementById('victory');
   if(!v) return;
-  const secs = Math.max(0, elapsed - runStartElapsed);
-  const mm = Math.floor(secs/60), ss = Math.floor(secs%60);
   v.querySelector('.vtitle').textContent = 'YOU FELL';
   v.querySelector('.vname').textContent = D ? D.name : '';
   v.querySelector('.vstats').textContent =
     'Floor ' + run.state.floor + ' · ' + run.state.kills + ' slain · ' +
-    run.state.gold + ' gold · ' + mm + 'm ' + (ss<10?'0':'') + ss + 's';
+    run.state.gold + ' gold · ' + runTime();
   v.querySelector('.vhint').innerHTML = '<b>R</b> to rise anew';
+  v.classList.add('show');
+}
+/* the mega boss falls on the final floor — the run is COMPLETE */
+function showRunComplete(){
+  gameOver = true;
+  hidePortal();
+  sfx.win();
+  const v = document.getElementById('victory');
+  if(!v) return;
+  v.querySelector('.vtitle').textContent = '☼ THE DEPTHS CONQUERED ☼';
+  v.querySelector('.vname').textContent = D ? D.name : '';
+  v.querySelector('.vstats').textContent =
+    'All ' + FINAL_FLOOR + ' floors · ' + run.state.kills + ' slain · Lv ' + run.state.level +
+    ' · ' + run.state.gold + ' gold · ' + runTime();
+  v.querySelector('.vhint').innerHTML = '<b>R</b> begins a new descent';
   v.classList.add('show');
 }
 
@@ -1459,7 +1518,8 @@ function showGameOver(){
 function forge(animate, fresh=true){
   player.root.visible = false;   // respawned by finishAnim after the build
   fogSuspend();                  // build animation shows the whole pipeline; fog re-arms at finishAnim
-  hidePortal(); gameOver = false; dismissVictory();
+  liquidMat.uniforms.uFogOn.value = 0;
+  hidePortal(); gameOver = false; dismissVictory(); cancelShop();
   let seed;
   if(fresh){
     run.newRun();                // brand-new run at floor 1
@@ -1551,21 +1611,29 @@ function liveUpdate(time, tt){
 let lastObj = '', lastProg = '';
 function updateObjective(){
   if(!D) return;
-  const s = enemyStats();
+  const s = enemyStats(), sl = sealStats();
+  const finalFloor = run.state.floor >= FINAL_FLOOR;
   /* progress reads as an ascending tally (matches the victory banner), not a
      countdown — clearing the boss lair wins the floor, not every last spawn */
   const prog = run.state.kills + ' slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' ⛃';
-  let obj;
-  if(s.won)            obj = 'Descend through the portal';
+  let obj, progLine = prog;
+  if(s.won){
+    obj = finalFloor ? 'The depths are conquered!' : 'Descend through the portal';
+    progLine = finalFloor ? 'Press R for a new descent' : 'Step into the glowing portal';
+  }
+  else if(sl.sealed){
+    obj = 'Shatter the ward on the boss lair';
+    progLine = sl.have + '/' + sl.need + ' foes slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' ⛃';
+  }
   else if(!s.bossAlive) obj = 'Clear the last of them';
-  else if(s.alive > s.bossAlive) obj = 'Fight toward the boss lair';
-  else                 obj = 'Slay the boss';
-  const progLine = s.won ? 'Step into the glowing portal' : prog;
+  else if(s.alive > s.bossAlive) obj = finalFloor ? 'Reach the final lair' : 'Fight toward the boss lair';
+  else obj = finalFloor ? 'Fell the Tyrant of the Depths' : 'Slay the boss';
   if(obj      !== lastObj){  el.objective.textContent = obj;      lastObj  = obj; }
   if(progLine !== lastProg){ el.floorProg.textContent = progLine; lastProg = progLine; }
 
-  /* boss just fell → open the descent portal at the lair */
+  /* boss just fell → portal on ordinary floors, triumph on the final one */
   if(s.won && !portalOpen && !gameOver && s.bossPos){
+    if(finalFloor){ showRunComplete(); return; }
     portalOpen = true;
     portal.g.position.set(s.bossPos.x, 0, s.bossPos.z);
     portal.g.visible = true;
@@ -1591,7 +1659,7 @@ function tick(){
     if(animT > animEnd + 0.35) finishAnim();
   }
   liveUpdate(elapsed, animating ? animT - 2.3 : Infinity);
-  if(!animating && player.root.visible && !run.state.dead){
+  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen()){
     run.tickRegen(dt);
     if(updatePlayer(player, dt, D, yaw, elapsed)){
       /* follow while moving; idle leaves camTarget alone so pan/orbit still work */
@@ -1607,10 +1675,13 @@ function tick(){
     } else if(elapsed < fogWriteUntil){
       /* keep animating the grow-in of freshly revealed tiles */
       for(const k in meshes) if(!FOG_LIVE.has(k)) fogWrite(meshes[k], elapsed);
+      updateLiquidFog(elapsed);
     }
     updateEnemies(dt, D, player, elapsed);
     updateLoot(dt, D, player, elapsed);
     updateShrines(dt, D, player, elapsed);
+    updateSeal(dt, D, elapsed);
+    updateHazards(dt, D, player, elapsed);
     updateObjective();
     if(portalOpen) updatePortal(elapsed);
   }
@@ -1701,6 +1772,8 @@ function toggleDev(open){
 }
 el.devToggle.addEventListener('click', ()=>toggleDev());
 document.querySelectorAll('#shrine .scard').forEach(c=>c.addEventListener('click', ()=>selectShrine(+c.dataset.i)));
+document.querySelectorAll('#shop .shopcard').forEach(c=>c.addEventListener('click', ()=>buyShopItem(+c.dataset.i)));
+document.getElementById('shopGo').addEventListener('click', ()=>shopDescend());
 
 addEventListener('keydown', e=>{
   const tag = e.target.tagName;
@@ -1708,6 +1781,11 @@ addEventListener('keydown', e=>{
   if(tag==='INPUT' && e.target.type!=='range' && e.target.type!=='checkbox') return;
   if(shrineActive() && (e.code==='Digit1' || e.code==='Digit2' || e.code==='Digit3')){
     e.preventDefault(); selectShrine(+e.code.slice(5) - 1); return;
+  }
+  if(shopOpen()){
+    if(/^Digit[1-4]$/.test(e.code)){ e.preventDefault(); buyShopItem(+e.code.slice(5) - 1); return; }
+    if(e.code==='Enter' || e.code==='Space'){ e.preventDefault(); shopDescend(); return; }
+    if(e.code!=='KeyR') return;    // only R (new run) escapes the shop
   }
   if(e.code==='KeyR'){ el.seed.value = 1 + Math.floor(Math.random()*999999); forge(true); }
   else if(e.code==='KeyG'){ el.tGraph.checked = !el.tGraph.checked; if(!animating) setOverlayStatic(); }
@@ -1717,7 +1795,11 @@ addEventListener('keydown', e=>{
     setThemeSel(order[(order.indexOf(themeSel)+1) % order.length]);
     forge(true);
   }
-  else if(e.code==='KeyF'){ el.tFog.checked = !el.tFog.checked; applyFogToggle(); }
+  else if(e.code==='KeyF'){
+    /* lifting the fog is a boon, not a birthright — requires the Scrying Orb */
+    if(run.state.relics.some(r=>r.key==='scry')){ el.tFog.checked = !el.tFog.checked; applyFogToggle(); }
+    else showToast('The fog resists you… seek the Scrying Orb.');
+  }
   else if(e.code==='KeyM'){ el.tSound.checked = !el.tSound.checked; setMuted(!el.tSound.checked); }
   else if(e.code==='KeyP'){ el.tPost.checked = !el.tPost.checked; POST.enabled = el.tPost.checked; }
   else if(e.code==='Backquote'){ e.preventDefault(); toggleDev(); }

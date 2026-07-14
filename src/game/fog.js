@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 
-const REVEAL_R = 4.5;   // corridor reveal radius around the player, in tiles
+const REVEAL_R = 7;     // corridor reveal radius around the player, in tiles
 const GROW = 0.35;      // seconds a newly seen tile takes to grow in
 
 let W = 0, H = 0;

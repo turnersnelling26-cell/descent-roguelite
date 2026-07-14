@@ -17,6 +17,7 @@ export const RELICS = {
   bramble:   { name:'Bramble Heart',   desc:'Attackers take 1 damage',  mod:{ thorns:1 } },
   emberward: { name:'Ember Ward',      desc:'Longer dash i-frames',     mod:{ iframeBonus:0.16 } },
   hunter:    { name:"Hunter's Mark",   desc:'+30% attack speed',        mod:{ atkCdMul:0.7 } },
+  scry:      { name:'Scrying Orb',     desc:'Press F to lift the fog',  mod:{} },
 };
 
 export const RELIC_KEYS = Object.keys(RELICS);

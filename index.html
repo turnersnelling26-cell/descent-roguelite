@@ -85,7 +85,7 @@
           <div class="kb"><span>Pan · Zoom · Orbit</span><b>drag · wheel · right-drag</b></div>
           <div class="kb"><span>Generator tools</span><b>`</b></div>
         </div>
-        <p class="tip">Descend from the entrance toward the boss lair. Red grunts swarm, blue casters snipe from range, orange chargers wind up then dash — Shift-dash through their bolts and blows for brief invulnerability. Crack open chests to heal, claim weapons in treasure rooms, and best the multi-phase boss to open the way down.</p>
+        <p class="tip">Conquer all five floors. Each boss lair is warded — slay foes to shatter the seal, then fell the boss to open the portal (and its shop) down. Red grunts swarm, blue casters snipe, orange chargers ram; spike traps skewer anything standing on them, and frozen lakes are treacherously slick. Dash (Shift) through danger, spend gold at the Wayshop, and claim boons at shrines — the Scrying Orb relic even lets F lift the fog. The Tyrant waits on floor five.</p>
       </details>
 
       <!-- GENERATOR / DEV DRAWER (hidden by default) -->
@@ -189,6 +189,18 @@
         <button class="scard" data-i="1"><span class="skey">2</span><span class="sn"></span><span class="sd"></span></button>
         <button class="scard mend" data-i="2"><span class="skey">3</span><span class="sn">Mend</span><span class="sd">Restore all health</span></button>
       </div>
+    </div>
+
+    <div id="shop" role="dialog" aria-label="Wayshop">
+      <div class="stitle">⚖ THE WAYSHOP ⚖</div>
+      <div class="ssub">spend before you descend · <span class="sgold">0 gold</span></div>
+      <div class="scards">
+        <button class="scard shopcard" data-i="0"><span class="skey">1</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
+        <button class="scard shopcard" data-i="1"><span class="skey">2</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
+        <button class="scard shopcard" data-i="2"><span class="skey">3</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
+        <button class="scard shopcard" data-i="3"><span class="skey">4</span><span class="sn"></span><span class="sd"></span><span class="sp"></span></button>
+      </div>
+      <button class="btn primary" id="shopGo">DESCEND&nbsp;▼&nbsp;<span style="opacity:.7;font-weight:400">enter</span></button>
     </div>
 
     <div id="bossbar"><div class="blabel">⚔ BOSS</div><div class="btrack"><i class="bfill"></i></div></div>

@@ -17,6 +17,7 @@ const RADIUS = 0.3;   // collision radius, must stay < 0.5 (one tile)
 /* -------- dash: a short, fast burst with i-frames, paid for in mana -------- */
 const DASH_SPEED = 20, DASH_TIME = 0.16, DASH_CD = 0.55, DASH_IFRAME = 0.24, DASH_COST = 1;
 let dashEnd = -1e9, dashCdEnd = -1e9, dashIfrEnd = -1e9, dashX = 0, dashZ = 0;
+let velX = 0, velZ = 0;      // persisted so frozen lakes can carry momentum
 export function tryDash(player, t){
   if(t < dashCdEnd || t < dashEnd) return false;   // on cooldown / already dashing
   if(!run.spendMana(DASH_COST)) return false;       // no mana → no dash
@@ -85,6 +86,7 @@ export function spawnPlayer(player, D){
   const r = D.rooms[D.entrance];
   player.root.position.set(r.cx - D.W/2 + 0.5, 0, r.cy - D.H/2 + 0.5);
   player.root.visible = true;
+  velX = velZ = 0;                 // no carried momentum across floors/respawns
 }
 
 export function updatePlayer(player, dt, D, yaw, t){
@@ -108,15 +110,29 @@ export function updatePlayer(player, dt, D, yaw, t){
   if(held.has('KeyS') || held.has('ArrowDown'))  { mx += s; mz += c; }
   if(held.has('KeyD') || held.has('ArrowRight')) { mx += c; mz -= s; }
   if(held.has('KeyA') || held.has('ArrowLeft'))  { mx -= c; mz += s; }
-  if(mx === 0 && mz === 0) return false;
 
-  const len = Math.hypot(mx, mz), step = SPEED * run.state.mods.moveMul * dt;
+  const speed = SPEED * run.state.mods.moveMul;
+  const len = Math.hypot(mx, mz) || 1;
+  const wantX = (mx/len)*speed, wantZ = (mz/len)*speed;
+
+  /* frozen lakes are slippery: on lakeMask tiles velocity chases the input
+     slowly, so you glide (and keep gliding after letting go). Solid ground
+     snaps instantly — normal responsive movement everywhere else. */
+  const tx = Math.floor(p.x + D.W/2), tz = Math.floor(p.z + D.H/2);
+  const onIce = tx>=0 && tz>=0 && tx<D.W && tz<D.H && D.lakeMask[tz*D.W + tx] === 1;
+  const blend = onIce ? 1 - Math.exp(-2.1*dt) : 1;
+  velX += (wantX - velX)*blend;
+  velZ += (wantZ - velZ)*blend;
+
+  const sp = Math.hypot(velX, velZ);
+  if(sp < 0.15){ velX = velZ = 0; return false; }
+
   /* axis-separated moves: rejecting one axis while the other passes = wall slide */
-  const nx = p.x + (mx/len)*step;
-  if(canStand(D, nx, p.z)) p.x = nx;
-  const nz = p.z + (mz/len)*step;
-  if(canStand(D, p.x, nz)) p.z = nz;
+  const nx = p.x + velX*dt;
+  if(canStand(D, nx, p.z)) p.x = nx; else velX = 0;
+  const nz = p.z + velZ*dt;
+  if(canStand(D, p.x, nz)) p.z = nz; else velZ = 0;
 
-  player.body.rotation.y = Math.atan2(mx, mz);
+  player.body.rotation.y = Math.atan2(velX, velZ);
   return true;
 }

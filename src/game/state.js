@@ -19,6 +19,9 @@ const DEFAULT_MODS = { dmgBonus:0, moveMul:1, dashCdMul:1, atkCdMul:1,
                        lifesteal:0, thorns:0, manaRegenMul:1, iframeBonus:0 };
 const MULT = new Set(['moveMul', 'dashCdMul', 'atkCdMul', 'manaRegenMul']);
 
+/* a run is a fixed descent: conquer this many floors and the depths are yours */
+export const FINAL_FLOOR = 5;
+
 export const state = {
   hp: 6, maxHp: 6,
   mana: 4, maxMana: 4,                     // mana is a float; the HUD shows it floored
@@ -58,7 +61,7 @@ export function renderHud(){
   e.barXp.style.width   = pct(state.xp, state.xpNext);
   e.level.textContent  = state.level;
   e.gold.textContent   = state.gold;
-  e.floor.textContent  = state.floor;
+  e.floor.textContent  = state.floor + '/' + FINAL_FLOOR;
   e.weapon.textContent = state.weapon + ' · ' + state.weaponSpeed;
   e.relics.innerHTML = state.relics.length
     ? state.relics.map(r=>'<span class="pill">'+r.name+'</span>').join('')

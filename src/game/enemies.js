@@ -14,6 +14,7 @@ import { canStand, dashInvuln } from './player.js';
 import { fogGate } from './fog.js';
 import { sfx } from './audio.js';
 import * as run from './state.js';
+import { FINAL_FLOOR } from './state.js';
 import { WEAPONS } from './weapons.js';
 
 const CAP = 256;
@@ -31,30 +32,94 @@ const TIERS = {
 /* boss — one per lair, a multi-phase fight with a HP bar (phases scale off HP) */
 const BOSS_TIER = { behavior:'boss', scale:1.6, color:0xff5040, speed:2.9, hp:12, dmg:2, xp:14, gold:30,
        fireCd:1.7, fireRange:14, projSpeed:8, projDmg:1, burstCd:3.2 };
+/* the mega boss — floor FINAL_FLOOR only: towering, relentless, and it summons */
+const MEGA_TIER = { behavior:'boss', scale:2.1, color:0xff2a18, speed:3.2, hp:26, dmg:3, xp:60, gold:150,
+       fireCd:1.3, fireRange:16, projSpeed:9, projDmg:1, burstCd:2.6, summonCd:5.5 };
 const AGGRO = 6, DEAGGRO = 10, CONTACT = 0.65, E_R = 0.26;
 const HIT_FLASH = 0.15, DEATH_ANIM = 0.25;
 const INVULN = 0.8, HURT_FLASH = 0.25;
 const PROJ_CAP = 24, PROJ_HIT = 0.55;
 const EPROJ_CAP = 48, EPROJ_HIT = 0.45;
 
-let mesh = null, ring = null, list = [];
+let bodies = null, ring = null, list = [];
 let projPool = [], projActive = [];       // player bolts (damage enemies)
 let eProjPool = [], eProjActive = [];     // enemy bolts (damage the player)
 let attackAt = -1e9, hurtAt = -1e9, ringAt = -1e9, attackRadius = 1.3;
 let bossRoomId = -1, bossPos = null, dungeonName = '', won = false, bossExists = false;
 
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(),
-      _s = new THREE.Vector3(), _m = new THREE.Matrix4(), _c = new THREE.Color();
+      _s = new THREE.Vector3(), _m = new THREE.Matrix4(), _c = new THREE.Color(),
+      _E = new THREE.Euler();
+
+/* ---- silhouette kit: single-color merged shapes, one InstancedMesh per
+   archetype so each enemy type reads at a glance ---- */
+function xg(g, x, y, z, rx, ry, rz, s){
+  const c = g.index ? g.toNonIndexed() : g.clone();
+  _m.compose(_p.set(x,y,z), _q.setFromEuler(_E.set(rx,ry,rz)), _s.setScalar(s));
+  c.applyMatrix4(_m);
+  return c;
+}
+function mergeGeos(parts){
+  let vc = 0; for(const g of parts) vc += g.attributes.position.count;
+  const pos = new Float32Array(vc*3), nor = new Float32Array(vc*3);
+  let o = 0;
+  for(const g of parts){
+    pos.set(g.attributes.position.array, o*3);
+    nor.set(g.attributes.normal.array, o*3);
+    o += g.attributes.position.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor,3));
+  return out;
+}
+function gruntGeo(){    // horned imp: capsule + two out-turned horns
+  return mergeGeos([
+    xg(new THREE.CapsuleGeometry(0.24, 0.3, 4, 10), 0, 0.42, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.24, 5),  0.15, 0.68, 0, 0,0,-0.55, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.24, 5), -0.15, 0.68, 0, 0,0, 0.55, 1),
+  ]);
+}
+function casterGeo(){   // hooded seer: robe cone + head + wide hat brim
+  return mergeGeos([
+    xg(new THREE.ConeGeometry(0.3, 0.62, 7),   0, 0.31, 0, 0,0,0, 1),
+    xg(new THREE.SphereGeometry(0.13, 8, 7),   0, 0.70, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.3, 0.14, 7),   0, 0.82, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.05, 0.16, 5),  0, 0.94, 0, 0,0,0, 1),
+  ]);
+}
+function chargerGeo(){  // battering brute: low slab + forward ram horn
+  return mergeGeos([
+    xg(new THREE.BoxGeometry(0.46, 0.36, 0.6), 0, 0.24, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.13, 0.36, 6),  0, 0.34, 0.42, Math.PI/2,0,0, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.2, 5),   0.16, 0.5, 0.16, -0.5,0,-0.4, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.2, 5),  -0.16, 0.5, 0.16, -0.5,0, 0.4, 1),
+  ]);
+}
+function bossGeo(){     // crowned tyrant: broad capsule + crown + shoulder spikes
+  return mergeGeos([
+    xg(new THREE.CapsuleGeometry(0.34, 0.5, 4, 12), 0, 0.68, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.07, 0.3, 5),   0,    1.26, 0, 0,0,0, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.24, 5),  0.15, 1.2,  0, 0,0,-0.35, 1),
+    xg(new THREE.ConeGeometry(0.06, 0.24, 5), -0.15, 1.2,  0, 0,0, 0.35, 1),
+    xg(new THREE.ConeGeometry(0.09, 0.3, 5),   0.4,  0.9,  0, 0,0,-1.0, 1),
+    xg(new THREE.ConeGeometry(0.09, 0.3, 5),  -0.4,  0.9,  0, 0,0, 1.0, 1),
+  ]);
+}
+const BODY_CAPS = { grunt:160, caster:64, charger:64, boss:4 };
 
 export function createEnemies(scene){
-  const geo = new THREE.CapsuleGeometry(0.24, 0.32, 4, 10);
-  geo.translate(0, 0.44, 0);   // base at floor level
   const mat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.55, metalness:0.05 });
-  mesh = new THREE.InstancedMesh(geo, mat, CAP);
-  mesh.count = 0;
-  mesh.frustumCulled = false;
-  mesh.castShadow = true;
-  scene.add(mesh);
+  bodies = {};
+  const geos = { grunt:gruntGeo(), caster:casterGeo(), charger:chargerGeo(), boss:bossGeo() };
+  for(const k in geos){
+    const m = new THREE.InstancedMesh(geos[k], mat, BODY_CAPS[k]);
+    m.count = 0;
+    m.frustumCulled = false;
+    m.castShadow = true;
+    scene.add(m);
+    bodies[k] = m;
+  }
 
   const rg = new THREE.TorusGeometry(0.9, 0.045, 8, 36);
   rg.rotateX(-Math.PI/2);
@@ -118,7 +183,10 @@ export function spawnEnemies(D){
        decoupled from the generator's difficulty tier — that tier instead scales
        HP, so deeper rooms are tougher without being all-elite. */
     let T, isBoss = false;
-    if(sp.roomId === bossRoomId && !bossPlaced){ T = BOSS_TIER; isBoss = true; bossPlaced = true; }
+    if(sp.roomId === bossRoomId && !bossPlaced){
+      T = run.state.floor >= FINAL_FLOOR ? MEGA_TIER : BOSS_TIER;
+      isBoss = true; bossPlaced = true;
+    }
     else if(sp.roomId === bossRoomId){ T = TIERS[1]; }
     else { const r = Math.random(); T = r < 0.6 ? TIERS[1] : r < 0.85 ? TIERS[2] : TIERS[3]; }
     const tierMul = isBoss ? 1 : 1 + (sp.tier - 1) * 0.3;
@@ -129,9 +197,33 @@ export function spawnEnemies(D){
                 cvx:0, cvz:0, curColor:-1, ti:sp.y*D.W + sp.x, ph:Math.random()*Math.PI*2 });
   }
   bossExists = bossPlaced;
-  mesh.count = list.length;
-  list.forEach((e,i)=>mesh.setColorAt(i, _c.set(e.T.color)));
-  if(mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  /* assign each enemy a slot in its archetype's InstancedMesh */
+  const counts = { grunt:0, caster:0, charger:0, boss:0 };
+  for(const e of list){
+    e.mkey = e.behavior;
+    if(counts[e.mkey] >= BODY_CAPS[e.mkey]) e.mkey = 'grunt';   // overflow safety
+    e.mi = counts[e.mkey]++;
+    e.face = 0;
+  }
+  for(const k in bodies) bodies[k].count = counts[k];
+  list.forEach(e=>bodies[e.mkey].setColorAt(e.mi, _c.set(e.T.color)));
+  for(const k in bodies) if(bodies[k].instanceColor) bodies[k].instanceColor.needsUpdate = true;
+}
+
+/* mid-fight reinforcement (mega boss summons) — grabs a free grunt slot */
+function summonGrunt(x, z, ti, hpMul){
+  const m = bodies.grunt;
+  if(m.count >= BODY_CAPS.grunt) return;
+  const T = TIERS[1];
+  const e = { x, z, tier:1, roomId:bossRoomId, T, behavior:'grunt', isBoss:false,
+    hp:Math.max(1, Math.round(T.hp*hpMul)), maxHp:1, alive:true, gone:false, aggro:true,
+    cd:0, flashAt:-1e9, deadAt:0, mode:'idle', modeT:-1e9, recoverAt:-1e9,
+    fireAt:-1e9, burstAt:-1e9, phase:1, cvx:0, cvz:0, curColor:-1, ti,
+    ph:Math.random()*Math.PI*2, mkey:'grunt', mi:m.count, face:0 };
+  m.count++;
+  m.setColorAt(e.mi, _c.set(T.color));
+  if(m.instanceColor) m.instanceColor.needsUpdate = true;
+  list.push(e);
 }
 
 /* apply a hit from (fromX,fromZ): damage, knockback along the blow, death/kill */
@@ -188,6 +280,15 @@ function updateProjectiles(dt, D, t){
   }
 }
 
+/* environmental damage (spike traps etc.) — hurts enemies too; their deaths
+   count as kills, feed relics, and chip the boss ward quota */
+export function damageEnemiesAt(x, z, r, dmg, D, t){
+  for(const e of list){
+    if(!e.alive) continue;
+    if(Math.hypot(e.x - x, e.z - z) < r) damageEnemy(e, dmg, 0.3, x, z, D, t);
+  }
+}
+
 export function tryAttack(player, D, t){
   const w = WEAPONS[run.state.weaponKey] || WEAPONS.blade;
   if(t < attackAt + w.cd * run.state.mods.atkCdMul) return;   // Hunter's Mark speeds this up
@@ -213,6 +314,7 @@ export function tryAttack(player, D, t){
 /* -------- enemy behaviours -------- */
 function moveToward(e, tx, tz, step, D){        // step<0 = retreat; axis-separated collision
   const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz) || 1;
+  e.face = Math.atan2(dx, dz);                  // face the target even while retreating
   const nx = e.x + (dx/d)*step;
   if(canStand(D, nx, e.z, E_R)) e.x = nx;
   const nz = e.z + (dz/d)*step;
@@ -238,6 +340,7 @@ function fireRing(e, n, speed, dmg){             // radial burst in every direct
 }
 function updateCaster(e, dt, D, pp, dist, t){    // kite at range, lob bolts
   const T = e.T;
+  e.face = Math.atan2(pp.x - e.x, pp.z - e.z);
   if(dist < T.keepDist - 0.4) moveToward(e, pp.x, pp.z, -T.speed*dt, D);
   else if(dist > T.fireRange) moveToward(e, pp.x, pp.z, T.speed*dt, D);
   if(dist <= T.fireRange && t - e.fireAt > T.fireCd){
@@ -255,7 +358,8 @@ function updateCharger(e, dt, D, pp, dist, t){   // idle → wind-up → dash �
   } else if(e.mode === 'wind'){
     if(t - e.modeT > T.windup){                  // lock aim, then launch
       const dx = pp.x - e.x, dz = pp.z - e.z, l = Math.hypot(dx, dz) || 1;
-      e.cvx = dx/l; e.cvz = dz/l; e.mode = 'charge'; e.modeT = t;
+      e.cvx = dx/l; e.cvz = dz/l; e.face = Math.atan2(e.cvx, e.cvz);
+      e.mode = 'charge'; e.modeT = t;
     }
   } else if(e.mode === 'charge'){
     const step = T.chargeSpeed*dt;
@@ -268,6 +372,7 @@ function updateCharger(e, dt, D, pp, dist, t){   // idle → wind-up → dash �
 function updateBoss(e, dt, D, pp, dist, t){      // 3 phases by HP: stalk → volley → burst
   const T = e.T, frac = e.hp / e.maxHp;
   e.phase = frac > 0.66 ? 1 : frac > 0.33 ? 2 : 3;
+  e.face = Math.atan2(pp.x - e.x, pp.z - e.z);
   const spd = T.speed * (e.phase===3 ? 1.4 : e.phase===2 ? 1.15 : 1);
   if(dist > 1.5) moveToward(e, pp.x, pp.z, spd*dt, D);   // close to melee; contact code handles the slam
   if(e.phase >= 2 && dist <= T.fireRange && t - e.fireAt > T.fireCd){
@@ -278,6 +383,16 @@ function updateBoss(e, dt, D, pp, dist, t){      // 3 phases by HP: stalk → vo
   if(e.phase === 3 && t - e.burstAt > T.burstCd){
     e.burstAt = t;
     fireRing(e, 12, T.projSpeed*0.8, T.projDmg);
+  }
+  /* the mega boss (final floor) calls reinforcements from phase 2 on */
+  if(T.summonCd && e.phase >= 2 && t - (e.summonAt ?? -1e9) > T.summonCd){
+    e.summonAt = t;
+    const hpMul = 1 + (run.state.floor - 1) * 0.3;
+    for(let k=0; k<2; k++){
+      const a = Math.random()*Math.PI*2, r = 1.6 + Math.random();
+      const sx = e.x + Math.sin(a)*r, sz = e.z + Math.cos(a)*r;
+      if(canStand(D, sx, sz, E_R)) summonGrunt(sx, sz, e.ti, hpMul);
+    }
   }
 }
 function updateEnemyProjectiles(dt, D, player, t){
@@ -332,7 +447,7 @@ export function updateEnemies(dt, D, player, t){
       if(k >= 1) e.gone = true;
       _s.setScalar(Math.max(s, 0.0001));
       _p.set(e.x, 0, e.z); _q.identity();
-      _m.compose(_p,_q,_s); mesh.setMatrixAt(i,_m);
+      _m.compose(_p,_q,_s); bodies[e.mkey].setMatrixAt(e.mi,_m);
       continue;
     }
 
@@ -372,13 +487,28 @@ export function updateEnemies(dt, D, player, t){
     else if(e.behavior==='charger' && e.mode==='wind')   col = 0xfff0c0;
     else if(e.behavior==='charger' && e.mode==='charge') col = 0xffd27a;
     else                                              col = e.T.color;
-    if(col !== e.curColor){ mesh.setColorAt(i, _c.set(col)); e.curColor = col; colorsDirty = true; }
+    if(col !== e.curColor){ bodies[e.mkey].setColorAt(e.mi, _c.set(col)); e.curColor = col; colorsDirty = true; }
 
-    const bob = e.aggro ? 0.07*Math.sin(t*9 + e.ph) : 0.03*Math.sin(t*2.2 + e.ph);
-    _p.set(e.x, bob, e.z);
-    _q.identity();
+    /* per-archetype idle/attack animation */
+    let y = 0, rx = 0, rz = 0, face = e.face;
+    if(e.behavior === 'caster'){
+      y = 0.16 + 0.07*Math.sin(t*2.6 + e.ph);            // hover, always afloat
+    } else if(e.behavior === 'charger'){
+      y = 0.02*Math.sin(t*3 + e.ph);
+      if(e.mode === 'wind'){ face += 0.1*Math.sin(t*38); rx = -0.12; }   // trembling wind-up
+      else if(e.mode === 'charge') rx = 0.32;                            // head-down ram
+      else if(e.mode === 'recover') rx = -0.1;
+    } else if(e.behavior === 'boss'){
+      y = 0.05*Math.sin(t*3.4 + e.ph);
+      if(e.phase === 3) rz = 0.06*Math.sin(t*10);        // enraged shudder
+    } else {
+      y = e.aggro ? 0.07*Math.sin(t*9 + e.ph) : 0.03*Math.sin(t*2.2 + e.ph);
+      if(e.aggro) rz = 0.08*Math.sin(t*9 + e.ph);        // scurrying waddle
+    }
+    _p.set(e.x, y, e.z);
+    _q.setFromEuler(_E.set(rx, face, rz));
     _s.setScalar(Math.max(e.T.scale * g, 0.0001));
-    _m.compose(_p,_q,_s); mesh.setMatrixAt(i,_m);
+    _m.compose(_p,_q,_s); bodies[e.mkey].setMatrixAt(e.mi,_m);
   }
 
   /* enemy-enemy push-apart, only among the (few) aggro'd */
@@ -392,8 +522,10 @@ export function updateEnemies(dt, D, player, t){
     if(canStand(D, e2.x + ux*push, e2.z + uz*push, E_R)){ e2.x += ux*push; e2.z += uz*push; }
   }
 
-  mesh.instanceMatrix.needsUpdate = true;
-  if(colorsDirty && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  for(const k in bodies){
+    bodies[k].instanceMatrix.needsUpdate = true;
+    if(colorsDirty && bodies[k].instanceColor) bodies[k].instanceColor.needsUpdate = true;
+  }
 
   updateProjectiles(dt, D, t);
   updateEnemyProjectiles(dt, D, player, t);
@@ -423,5 +555,7 @@ export function enemyStats(){
     chargerPos: (()=>{ const e = alive.find(x=>x.behavior==='charger'); return e?{x:+e.x.toFixed(2),z:+e.z.toFixed(2)}:null; })(),
     eProj: eProjActive.length,
     nearest: alive.slice(0,3).map(e=>({x:+e.x.toFixed(2), z:+e.z.toFixed(2), tier:e.tier})),
+    foes: alive.slice(0,60).map(e=>({x:+e.x.toFixed(2), z:+e.z.toFixed(2), hp:e.hp,
+      inLair: e.roomId === bossRoomId, behavior: e.behavior })),
   };
 }

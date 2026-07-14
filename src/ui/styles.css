@@ -156,6 +156,35 @@
   #shrine .sn{font-family:var(--serif);font-size:15px;color:#eef0f6}
   #shrine .sd{font-size:10.5px;color:#9aa0b4;line-height:1.35}
 
+  /* wayshop — between-floors gold sink, shares the shrine card look */
+  #shop{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.96);
+    z-index:9;text-align:center;padding:22px 26px;
+    background:#0a0c12f2;border:1px solid #4a3a2a;border-radius:16px;
+    box-shadow:0 18px 60px #000c;
+    opacity:0;pointer-events:none;transition:opacity .28s,transform .28s;
+  }
+  #shop.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #shop .stitle{color:var(--gold);font-size:13px;letter-spacing:.3em;margin-bottom:3px}
+  #shop .ssub{color:var(--dim);font-size:10px;letter-spacing:.1em;margin-bottom:16px}
+  #shop .sgold{color:var(--gold)}
+  #shop .scards{display:flex;gap:10px;justify-content:center;margin-bottom:16px}
+  #shop .scard{
+    width:132px;min-height:118px;display:flex;flex-direction:column;align-items:center;gap:6px;
+    padding:14px 10px;cursor:pointer;text-align:center;
+    background:#12141f;border:1px solid #2c3042;border-radius:10px;color:var(--ink);
+    transition:background .12s,border-color .12s,transform .1s,opacity .12s;
+  }
+  #shop .scard:hover{background:#1a1e2c;border-color:#8a6f3a;transform:translateY(-2px)}
+  #shop .scard.off{opacity:0.4;cursor:default}
+  #shop .scard.off:hover{background:#12141f;border-color:#2c3042;transform:none}
+  #shop .skey{width:20px;height:20px;line-height:20px;border-radius:5px;background:#0d0f16;
+    border:1px solid #3a3f56;color:var(--dim);font-size:11px}
+  #shop .sn{font-family:var(--serif);font-size:14px;color:#eef0f6}
+  #shop .sd{font-size:10px;color:#9aa0b4;line-height:1.35}
+  #shop .sp{margin-top:auto;color:var(--gold);font-size:11.5px}
+  #shopGo{width:100%}
+
   /* boss health bar — top-center, shown while the boss is in view */
   #bossbar{
     position:fixed;top:18px;left:50%;transform:translate(-50%,-8px);
