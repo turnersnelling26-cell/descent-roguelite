@@ -34,10 +34,65 @@
     <div id="panel">
       <button id="collapse" aria-label="Collapse panel" title="Collapse">–</button>
       <div class="head">
-        <div class="brand"><span>DUNGEON&nbsp;FORGE</span><span>procgen&nbsp;core</span></div>
+        <div class="brand"><span>DESCENT</span><span>a procgen crawl</span></div>
         <h1 id="dname">—</h1>
         <div id="dsub">forging…</div>
       </div>
+
+      <!-- VITALS -->
+      <div class="sec vitals">
+        <div class="vital">
+          <div class="vlab"><span>HEALTH</span><b id="vHp">6 / 6</b></div>
+          <div class="bar hp"><i id="barHp"></i></div>
+        </div>
+        <div class="vital">
+          <div class="vlab"><span>MANA</span><b id="vMana">4 / 4</b></div>
+          <div class="bar mana"><i id="barMana"></i></div>
+        </div>
+        <div class="vital">
+          <div class="vlab"><span>EXPERIENCE</span><b id="vXp">0 / 5</b></div>
+          <div class="bar xp"><i id="barXp"></i></div>
+        </div>
+      </div>
+
+      <!-- CHARACTER -->
+      <div class="sec char">
+        <div class="charrow">
+          <div class="cstat"><i>LEVEL</i><b id="vLevel">1</b></div>
+          <div class="cstat"><i>FLOOR</i><b id="vFloor">1</b></div>
+          <div class="cstat"><i>GOLD</i><b id="vGold">0</b></div>
+        </div>
+        <div class="kv"><i>WEAPON</i><b id="vWeapon">Rusted Blade</b></div>
+        <div class="kv relicrow"><i>RELICS</i><div id="vRelics" class="pills"><span class="dimpill">none yet</span></div></div>
+      </div>
+
+      <!-- OBJECTIVE -->
+      <div class="sec obj">
+        <div class="olab">OBJECTIVE</div>
+        <div id="objective">Descend into the dungeon.</div>
+        <div id="floorProg">—</div>
+      </div>
+
+      <!-- HOW TO PLAY -->
+      <details class="sec help">
+        <summary>How to play</summary>
+        <div class="kbs">
+          <div class="kb"><span>Move</span><b>W A S D</b></div>
+          <div class="kb"><span>Attack</span><b>Space</b></div>
+          <div class="kb"><span>Dash (dodge)</span><b>Shift</b></div>
+          <div class="kb"><span>New run</span><b>R</b></div>
+          <div class="kb"><span>Fog · Sound</span><b>F · M</b></div>
+          <div class="kb"><span>Pan · Zoom · Orbit</span><b>drag · wheel · right-drag</b></div>
+          <div class="kb"><span>Generator tools</span><b>`</b></div>
+        </div>
+        <p class="tip">Descend from the entrance toward the boss lair. Red grunts swarm, blue casters snipe from range, orange chargers wind up then dash — Shift-dash through their bolts and blows for brief invulnerability. Crack open chests to heal, claim weapons in treasure rooms, and best the multi-phase boss to open the way down.</p>
+      </details>
+
+      <!-- GENERATOR / DEV DRAWER (hidden by default) -->
+      <div class="sec devbar">
+        <button class="btn" id="devToggle" aria-expanded="false">⚙ Generator &amp; dev tools <span class="key">`</span></button>
+      </div>
+      <div id="devDrawer">
 
       <ul class="pipe" id="pipe" aria-label="Generation pipeline">
         <li>SCATTER</li><li>SEPARATE</li><li>DELAUNAY</li><li>MST+LOOPS</li><li>CARVE</li><li>THEME</li>
@@ -90,6 +145,8 @@
       <div class="sec togs">
         <label class="tog"><input type="checkbox" id="tGraph"> Graph overlay <span class="key">G</span></label>
         <label class="tog"><input type="checkbox" id="tHeat"> Difficulty heatmap <span class="key">H</span></label>
+        <label class="tog"><input type="checkbox" id="tFog" checked> Fog of war <span class="key">F</span></label>
+        <label class="tog"><input type="checkbox" id="tSound" checked> Sound <span class="key">M</span></label>
         <label class="tog"><input type="checkbox" id="tAnim" checked> Animate build <span class="key">SPACE&nbsp;skips</span></label>
         <label class="tog"><input type="checkbox" id="tPost" checked> Post FX <span class="key">P</span></label>
       </div>
@@ -114,9 +171,31 @@
         <div class="st"><i>TRIANGLES</i><b id="sTris">—</b></div>
         <div class="st"><i>FPS</i><b id="sFps">—</b></div>
       </div>
+      </div><!-- /#devDrawer -->
     </div>
 
-    <div id="hints"><b>drag</b> pan · <b>wheel</b> zoom · <b>shift-drag</b> orbit · <b>R</b> reforge · <b>T</b> theme · <b>G</b> graph · <b>H</b> heat · <b>P</b> post · <b>space</b> skip</div>
+    <div id="victory" role="status">
+      <div class="vtitle">DUNGEON&nbsp;CLEARED</div>
+      <div class="vname">—</div>
+      <div class="vstats">—</div>
+      <div class="vhint"><b>R</b> forges the next dungeon</div>
+    </div>
+
+    <div id="shrine" role="dialog" aria-label="Shrine boon">
+      <div class="stitle">✦ SHRINE ✦</div>
+      <div class="ssub">choose a boon</div>
+      <div class="scards">
+        <button class="scard" data-i="0"><span class="skey">1</span><span class="sn"></span><span class="sd"></span></button>
+        <button class="scard" data-i="1"><span class="skey">2</span><span class="sn"></span><span class="sd"></span></button>
+        <button class="scard mend" data-i="2"><span class="skey">3</span><span class="sn">Mend</span><span class="sd">Restore all health</span></button>
+      </div>
+    </div>
+
+    <div id="bossbar"><div class="blabel">⚔ BOSS</div><div class="btrack"><i class="bfill"></i></div></div>
+
+    <div id="toast" role="status"></div>
+
+    <div id="hints"><b>WASD</b> move · <b>space</b> attack · <b>shift</b> dash · <b>R</b> new run · <b>F</b> fog · <b>M</b> sound · <b>`</b> tools</div>
 
     <script type="module" src="./src/main.js"></script>
   </body>

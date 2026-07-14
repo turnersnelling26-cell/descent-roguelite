@@ -85,6 +85,111 @@
     background:#0a0c12cc;padding:6px 14px;border-radius:20px;border:1px solid #1a1d2a;
   }
   #hints b{color:#8d93a8;font-weight:400}
+  /* ---- character sheet (retrofit of the left column) ---- */
+  .vital{margin-top:11px}
+  .vital:first-child{margin-top:0}
+  .vlab{display:flex;justify-content:space-between;color:var(--dim);font-size:10px;letter-spacing:.08em;margin-bottom:5px}
+  .vlab b{color:var(--ink);font-weight:400}
+  .bar{height:11px;background:#10121b;border:1px solid #1d2130;border-radius:6px;overflow:hidden}
+  .bar>i{display:block;height:100%;width:0;border-radius:5px;transition:width .28s ease}
+  .bar.hp>i{background:linear-gradient(90deg,#c33f34,#ff7a6b)}
+  .bar.mana>i{background:linear-gradient(90deg,#356ec0,#6fb0f0)}
+  .bar.xp>i{background:linear-gradient(90deg,#c68a2e,#f0c46a)}
+
+  .charrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .cstat{background:#10121b;border:1px solid #1d2130;border-radius:6px;padding:7px 8px;text-align:center}
+  .cstat i{display:block;font-style:normal;color:var(--dim);font-size:8.5px;letter-spacing:.1em;margin-bottom:3px}
+  .cstat b{font-weight:400;font-size:15px;color:#e8eaf2}
+  .kv{display:flex;justify-content:space-between;align-items:center;margin-top:9px;gap:10px}
+  .kv i{font-style:normal;color:var(--dim);font-size:10px;letter-spacing:.1em}
+  .kv b{font-weight:400;font-size:12px;color:#e8eaf2;text-align:right}
+  .relicrow{align-items:flex-start}
+  .pills{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;flex:1}
+  .pill{font-size:9px;padding:2px 6px;border-radius:4px;color:var(--gold);
+    border:1px solid color-mix(in srgb,var(--gold) 45%,#1a1a22);
+    background:color-mix(in srgb,var(--gold) 12%,transparent)}
+  .dimpill{font-size:10px;color:var(--dim)}
+
+  .obj .olab{color:var(--dim);font-size:9px;letter-spacing:.14em;margin-bottom:6px}
+  #objective{color:#eef0f6;font-size:13px;font-family:var(--serif);line-height:1.3}
+  #floorProg{margin-top:6px;color:var(--dim);font-size:10.5px;letter-spacing:.04em}
+
+  .help summary{cursor:pointer;color:var(--dim);font-size:10px;letter-spacing:.12em;list-style:none;
+    display:flex;align-items:center;gap:6px}
+  .help summary::-webkit-details-marker{display:none}
+  .help summary::before{content:'▸';font-size:9px;transition:transform .18s}
+  .help[open] summary::before{transform:rotate(90deg)}
+  .help .kbs{margin-top:11px;display:flex;flex-direction:column;gap:6px}
+  .help .kb{display:flex;justify-content:space-between;color:#9aa0b4;font-size:10.5px}
+  .help .kb b{color:#c9cedb;font-weight:400}
+  .help .tip{margin-top:11px;color:#767c90;font-size:10.5px;line-height:1.5}
+
+  .devbar{padding-top:11px;padding-bottom:11px}
+  #devToggle{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;color:var(--dim)}
+  #devToggle .key{color:#565b6e;font-size:9px;border:1px solid #262a3a;padding:1px 5px;border-radius:3px}
+  #devDrawer{display:none}
+  #devDrawer.open{display:block}
+
+  /* shrine boon overlay — centered choice cards */
+  #shrine{
+    position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.96);
+    z-index:9;text-align:center;padding:22px 26px;
+    background:#0a0c12f2;border:1px solid #3a3550;border-radius:16px;
+    box-shadow:0 18px 60px #000c;
+    opacity:0;pointer-events:none;transition:opacity .28s,transform .28s;
+  }
+  #shrine.show{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto}
+  #shrine .stitle{color:#b79dff;font-size:13px;letter-spacing:.34em;margin-bottom:3px}
+  #shrine .ssub{color:var(--dim);font-size:10px;letter-spacing:.14em;margin-bottom:16px}
+  #shrine .scards{display:flex;gap:12px;justify-content:center}
+  #shrine .scard{
+    width:150px;min-height:104px;display:flex;flex-direction:column;align-items:center;gap:7px;
+    padding:16px 12px;cursor:pointer;text-align:center;
+    background:#12141f;border:1px solid #2c3042;border-radius:10px;color:var(--ink);
+    transition:background .12s,border-color .12s,transform .1s;
+  }
+  #shrine .scard:hover{background:#1a1e2c;border-color:#5a4f8a;transform:translateY(-2px)}
+  #shrine .scard.mend{border-color:color-mix(in srgb,var(--blood) 40%,#2c3042)}
+  #shrine .scard.mend:hover{border-color:var(--blood)}
+  #shrine .skey{width:20px;height:20px;line-height:20px;border-radius:5px;background:#0d0f16;
+    border:1px solid #3a3f56;color:var(--dim);font-size:11px}
+  #shrine .sn{font-family:var(--serif);font-size:15px;color:#eef0f6}
+  #shrine .sd{font-size:10.5px;color:#9aa0b4;line-height:1.35}
+
+  /* boss health bar — top-center, shown while the boss is in view */
+  #bossbar{
+    position:fixed;top:18px;left:50%;transform:translate(-50%,-8px);
+    z-index:7;width:min(440px,60vw);pointer-events:none;
+    opacity:0;transition:opacity .3s,transform .3s;
+  }
+  #bossbar.show{opacity:1;transform:translate(-50%,0)}
+  #bossbar .blabel{text-align:center;color:#e0564a;font-size:10px;letter-spacing:.28em;margin-bottom:5px}
+  #bossbar .btrack{height:12px;background:#10121b;border:1px solid #3a2430;border-radius:6px;overflow:hidden;box-shadow:0 4px 16px #000a}
+  #bossbar .bfill{display:block;height:100%;width:100%;background:#d8433a;border-radius:5px;transition:width .18s ease,background .3s}
+
+  /* pickup toast — brief centered banner (weapon found, etc.) */
+  #toast{
+    position:fixed;top:74px;left:50%;transform:translate(-50%,-8px);
+    z-index:7;pointer-events:none;
+    background:#0a0c12e6;border:1px solid #3a3f56;border-radius:10px;
+    padding:9px 18px;color:#eef0f6;font-size:12px;letter-spacing:.04em;
+    font-family:var(--serif);
+    opacity:0;transition:opacity .25s,transform .25s;
+  }
+  #toast.show{opacity:1;transform:translate(-50%,0)}
+  /* victory banner */
+  #victory{
+    position:fixed;top:38%;left:50%;transform:translate(-50%,-50%) scale(0.94);
+    z-index:8;text-align:center;padding:26px 44px;
+    background:#0a0c12e6;border:1px solid #2c3042;border-radius:14px;
+    opacity:0;pointer-events:none;transition:opacity .35s,transform .35s;
+  }
+  #victory.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  #victory .vtitle{color:var(--gold,#d9a441);font-size:13px;letter-spacing:.4em;margin-bottom:8px}
+  #victory .vname{font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#e8eaf2;margin-bottom:10px}
+  #victory .vstats{color:#8d93a8;font-size:11px;letter-spacing:.06em;margin-bottom:12px}
+  #victory .vhint{color:#525871;font-size:10px;letter-spacing:.06em}
+  #victory .vhint b{color:#8d93a8;font-weight:400}
   /* Collapse control — a real button with a comfortable hit area, present on
      desktop and mobile alike. */
   #collapse{
