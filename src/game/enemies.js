@@ -333,6 +333,13 @@ export function spawnEnemies(D){
     list.push(e);
   }
   bossExists = bossPlaced;
+  /* per-room headcounts for the room-clear bonus */
+  roomAlive = new Map(); roomInit = new Map(); roomCleared = new Set();
+  for(const e of list){
+    if(e.roomId == null || e.roomId < 0 || e.roomId === bossRoomId) continue;
+    roomAlive.set(e.roomId, (roomAlive.get(e.roomId) || 0) + 1);
+    roomInit.set(e.roomId, (roomInit.get(e.roomId) || 0) + 1);
+  }
   const counts = { grunt:0, caster:0, charger:0, bomber:0, warden:0, summoner:0, boss:0 };
   for(const e of list){
     e.mkey = e.behavior;
@@ -354,6 +361,9 @@ function summonGrunt(x, z, ti, hpMul, opts = {}){
   e.ti = ti; e.hp = hp; e.maxHp = hp; e.aggro = true;
   e.roomId = opts.roomId ?? bossRoomId;
   e.summonerId = opts.summonerId ?? null;
+  /* reinforcements keep their room's clear-bonus honest */
+  if(e.roomId >= 0 && e.roomId !== bossRoomId && !roomCleared.has(e.roomId))
+    roomAlive.set(e.roomId, (roomAlive.get(e.roomId) || 0) + 1);
   e.mkey = 'grunt'; e.mi = m.count;
   m.count++;
   m.setColorAt(e.mi, _c.set(T.color));
@@ -387,6 +397,24 @@ function wardenBlocks(e, fromX, fromZ){
 /* hook for floating damage numbers (main.js renders them) */
 let onDamageCb = null;
 export const onEnemyDamage = cb => { onDamageCb = cb; };
+
+/* room-clear payoff: last foe of a real room fight pays a gold bonus.
+   Gives every room its own do→get beat instead of one payoff per floor. */
+let roomAlive = new Map(), roomInit = new Map(), roomCleared = new Set();
+let onRoomClearCb = null;
+export const onRoomClear = cb => { onRoomClearCb = cb; };
+
+function noteRoomDeath(e){
+  const rid = e.roomId;
+  if(rid == null || rid < 0 || rid === bossRoomId || roomCleared.has(rid)) return;
+  const left = (roomAlive.get(rid) || 0) - 1;
+  roomAlive.set(rid, left);
+  if(left > 0 || (roomInit.get(rid) || 0) < 3) return;
+  roomCleared.add(rid);
+  const gold = 4 + run.state.floor * 2;
+  run.addGold(gold);
+  if(onRoomClearCb) onRoomClearCb(e.x, e.z, gold);
+}
 
 /* apply a hit from (fromX,fromZ): damage, knockback along the blow, death/kill */
 function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false, opts={}){
@@ -425,6 +453,7 @@ function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false, opts={}){
     if(opts.boltKill && run.state.mods.boltMana) run.state.mana = Math.min(run.state.maxMana, run.state.mana + run.state.mods.boltMana);
     if(e.isBoss) noteKill(run.state.floor >= FINAL_FLOOR ? 'mega' : 'boss');
     else noteKill(e.behavior);
+    noteRoomDeath(e);
     const heartP = run.state.mods.heartChance || 0.08;
     if(e.elite || (!e.isBoss && Math.random() < heartP)) dropHeart(e.x, e.z, t);
     sfx.kill(); checkWin();

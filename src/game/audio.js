@@ -96,6 +96,13 @@ export const sfx = {
     osc('sine', 660, 660, t, 0.09, env(master, t, 0.09, 0.5));
     osc('sine', 990, 990, t + 0.09, 0.16, env(master, t + 0.09, 0.16, 0.5));
   },
+  clear(){ if(!live()) return; const t = ctx.currentTime;   // room-clear: quick bright triad
+    [523, 784].forEach((f,i)=>{
+      const at = t + i*0.08;
+      osc('sine', f, f, at, 0.12, env(master, at, 0.12, 0.4));
+    });
+    osc('triangle', 1047, 1047, t + 0.16, 0.18, env(master, t + 0.16, 0.18, 0.3));
+  },
   win(){ if(!live()) return; const t = ctx.currentTime;
     [523, 659, 784, 1047].forEach((f,i)=>{
       const at = t + i*0.16;

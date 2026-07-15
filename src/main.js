@@ -15,7 +15,7 @@ import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump, failedDashNo
 import { WEAPONS } from './game/weapons.js';
 import { fogReset, fogSuspend, fogMark, fogGate, fogSeen, fogWrite,
          setFogEnabled, fogStats } from './game/fog.js';
-import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage, combatNearby } from './game/enemies.js';
+import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage, onRoomClear, combatNearby } from './game/enemies.js';
 import { createLoot, spawnLoot, updateLoot, lootStats, showToast, takeWeapon, weaponPromptActive } from './game/loot.js';
 import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } from './game/shrines.js';
 import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
@@ -38,6 +38,7 @@ import {
 import { floorTease } from './game/curriculum.js';
 import { updateHints, hintDashMana, hintElite, deathTip } from './game/hints.js';
 import { resetGoals, updateGoals, goalsSummary, themeGoalHint } from './game/goals.js';
+import { createScout, spawnScout, updateScout, scoutMarkers, scoutStats } from './game/scout.js';
 
 /* ================================================================
    DESCENT — renderer + game loop
@@ -77,6 +78,13 @@ createSeal(scene);
 createHazards(scene);
 createParkour(scene);
 createAltars(scene);
+createScout(scene);
+
+/* the hero carries a lantern — a readable pool of light wherever you are,
+   so the world isn't a black void between torch-lit rooms */
+const lantern = new THREE.PointLight(0xffd2a8, 9, 10, 1.9);
+lantern.position.y = 1.7;
+player.root.add(lantern);
 window.__player = player;   // exposed for automated tests
 window.__fog = fogStats;
 window.__enemies = enemyStats;
@@ -90,6 +98,7 @@ window.__seal = sealStats;
 window.__hazards = hazardStats;
 window.__shop = shopStats;
 window.__save = saveSnapshot;
+window.__scout = scoutStats;
 /* test hook: jump straight to floor n (descend path, character preserved) */
 window.__forgeFloor = n => { run.state.floor = n - 1; forge(false, false); };
 
@@ -129,12 +138,19 @@ const dmgPool = [];
 }
 let dmgIdx = 0;
 const _dm = new THREE.Vector3();
-onEnemyDamage((x, z, amt, crit)=>{
+function spawnFloater(x, z, text, cls){
   if(!dmgPool.length) return;
   const s = dmgPool[dmgIdx++ % dmgPool.length];
   s.x = x; s.z = z; s.at = elapsed;
-  s.el.textContent = crit ? amt + '!' : amt;
-  s.el.classList.toggle('crit', crit);
+  s.el.textContent = text;
+  s.el.className = 'dn' + (cls ? ' ' + cls : '');
+}
+onEnemyDamage((x, z, amt, crit)=>{
+  spawnFloater(x, z, crit ? amt + '!' : amt, crit ? 'crit' : '');
+});
+onRoomClear((x, z, gold)=>{
+  spawnFloater(x, z, 'ROOM CLEAR +' + gold + 'g', 'gold');
+  sfx.clear();
 });
 function updateDmgNums(){
   for(const s of dmgPool){
@@ -204,9 +220,16 @@ function minimapDraw(){
   /* cartographer pulse overlays */
   if(elapsed < cartPulseUntil){
     for(const p of cartPings){
-      mmCtx.fillStyle = p.kind === 'chest' ? '#ffd27a' : p.kind === 'shrineCrystal' ? '#9b8cff' : '#7ab0ff';
+      mmCtx.fillStyle = p.kind === 'boss' ? '#ff5a5a'
+        : p.kind === 'chest' ? '#ffd27a' : p.kind === 'shrineCrystal' ? '#9b8cff' : '#7ab0ff';
       mmCtx.fillRect(p.x - 1, p.y - 1, 3, 3);
     }
+  }
+  /* scouted doors — route choices echoed on the map */
+  const SCOUT_MM = { elite:'#b17aff', treasure:'#ffd27a', shrine:'#8ab4ff', boss:'#ff5a5a' };
+  for(const m of scoutMarkers()){
+    mmCtx.fillStyle = SCOUT_MM[m.type] || '#ffffff';
+    mmCtx.fillRect(Math.floor(m.x + D.W/2), Math.floor(m.z + D.H/2), 2, 2);
   }
   const decoy = getDecoy();
   if(decoy && elapsed < decoy.until){
@@ -225,6 +248,10 @@ addEventListener('keydown', ensureAudio);
 addEventListener('pointerdown', ensureAudio);
 
 const BASE_HALF = 55;
+/* forge shows the whole dungeon; play happens at hero scale. The camera
+   glides between the two — wheel zoom always overrides. */
+const GAME_ZOOM = 2.5;
+let zoomGoal = null;
 let aspect = innerWidth/innerHeight;
 const cam = new THREE.OrthographicCamera(-BASE_HALF*aspect, BASE_HALF*aspect, BASE_HALF, -BASE_HALF, -400, 800);
 let yaw = Math.PI/4, pitch = 0.64;
@@ -247,7 +274,7 @@ updateCam();
 const LIGHT_K = 4 * Math.PI;
 
 /* painted-miniature light rig: warm key with soft shadows, cool ambient */
-const hemi = new THREE.HemisphereLight(0x2e3a52, 0x0a0b10, 0.55);
+const hemi = new THREE.HemisphereLight(0x2e3a52, 0x0a0b10, 0.75);
 scene.add(hemi);
 const dirL = new THREE.DirectionalLight(0xffe8c8, 0.85);
 dirL.position.set(72, 78, 46);
@@ -1570,7 +1597,11 @@ function finishAnim(){
   spawnShrines(D);
   spawnHazards(D, D.params.themeKey);
   spawnAltars(D);
+  spawnScout(D);
   resetGoals(D, D.params.themeKey);
+  /* leave map view — dive down to the hero */
+  camTarget.copy(player.root.position);
+  zoomGoal = GAME_ZOOM;
   if(run.state.floor >= 3) hintElite();
   { const es = enemyStats();                       // ward quota = foes outside the lair
     spawnSeal(D, es.total - es.bossFoes.length); }
@@ -1844,10 +1875,18 @@ function liveUpdate(time, tt){
 }
 
 /* -------- objective line — main goal + discovery side goals -------- */
-let lastObj = '', lastProg = '';
+let lastObj = '', lastProg = '', wasSealed = false;
 function updateObjective(){
   if(!D) return;
   const s = enemyStats(), sl = sealStats();
+  /* the ward just shattered — mark the lair so the pull is visible */
+  if(wasSealed && !sl.sealed && s.bossAlive){
+    const br = D.rooms[D.boss];
+    cartPings = [{ x: Math.round(br.cx), y: Math.round(br.cy), kind: 'boss' }];
+    cartPulseUntil = elapsed + 6;
+    showToast('The ward shatters — the lair burns red on your map');
+  }
+  wasSealed = !!sl.sealed;
   const finalFloor = run.state.floor >= FINAL_FLOOR;
   const gs = goalsSummary();
   const prog = run.state.kills + ' slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' chests · ' + gs.short;
@@ -1860,8 +1899,9 @@ function updateObjective(){
     progLine = themeHint + ' · ' + prog;
   }
   else if(teachWindow){
-    obj = themeHint;
-    progLine = prog;
+    /* floor 1 has no tease — the primary goal leads, the lesson supports */
+    obj = 'Fight toward the boss lair';
+    progLine = themeHint + ' · ' + prog;
   }
   else if(s.won){
     obj = finalFloor ? 'The depths are conquered!' : 'Descend through the portal';
@@ -1939,11 +1979,19 @@ function tick(){
     updateHazards(dt, D, player, elapsed);
     updateParkour(dt, D, player, elapsed);
     updateAltars(dt, D, player, elapsed);
+    updateScout(dt, elapsed);
     updateHints(player, elapsed);
     updateGoals(D);
     updateObjective();
     if(portalOpen) updatePortal(elapsed);
     minimapDraw();
+  }
+  /* glide toward the gameplay zoom after a forge; wheel zoom cancels it */
+  if(zoomGoal != null){
+    cam.zoom += (zoomGoal - cam.zoom) * Math.min(1, 3*dt);
+    if(Math.abs(cam.zoom - zoomGoal) < 0.01){ cam.zoom = zoomGoal; zoomGoal = null; }
+    cam.updateProjectionMatrix();
+    updateCam();
   }
   updateDmgNums();
   if(run.state.dead && !gameOver) showGameOver();
@@ -1989,6 +2037,7 @@ cnv.addEventListener('pointercancel', endDrag);
 cnv.addEventListener('contextmenu', e=>e.preventDefault());
 cnv.addEventListener('wheel', e=>{
   e.preventDefault();
+  zoomGoal = null;   // the player's hand on the wheel outranks the auto-zoom
   cam.zoom = Math.min(6, Math.max(0.12, cam.zoom*Math.exp(-e.deltaY*0.0012)));
   cam.updateProjectionMatrix();
 }, {passive:false});
@@ -2128,6 +2177,14 @@ document.getElementById('resumeRest')?.addEventListener('click', ()=>{
   forge(false, { resume: data });
   showToast('Resumed from Rest — floor ' + data.floor);
   refreshMetaPanel();
+});
+
+/* Mouse clicks must never steal the game keys: a clicked button keeps focus,
+   and the BUTTON guard below would then eat Space/Shift/C forever. Drop focus
+   after any pointer press ends (keyboard Tab users keep normal focus). */
+addEventListener('pointerup', ()=>{
+  const a = document.activeElement;
+  if(a && a.tagName === 'BUTTON') a.blur();
 });
 
 addEventListener('keydown', e=>{

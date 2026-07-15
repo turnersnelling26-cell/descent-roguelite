@@ -68,6 +68,11 @@ export function fogGate(ti, t){
 }
 export const fogSeen = ti => !active || !enabled || !seenAt || seenAt[ti] >= 0;
 
+/** True once the player has actually stood inside room `rid` (not merely
+    glimpsed its tiles from a corridor). Scout runes retire on entry. */
+export const fogRoomEntered = rid =>
+  !active || !enabled || !roomSeen || (rid >= 0 && roomSeen[rid] === 1);
+
 /* mirror of writeInstances, with the fog gate folded into the authored scale */
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(),
       _s = new THREE.Vector3(), _m = new THREE.Matrix4(), _E = new THREE.Euler();

@@ -13,6 +13,11 @@ const BOON_DEFS = {
   swiftness: { name:'Swiftness', desc:'+6% move speed',    apply:()=>{ run.state.mods.moveMul *= 1.06; run.renderHud(); } },
   precision: { name:'Precision', desc:'+8% crit chance',   apply:()=>{ run.state.mods.critBonus = (run.state.mods.critBonus||0) + 0.08; run.renderHud(); } },
   force:     { name:'Force',     desc:'+1 weapon damage',  apply:()=>{ run.state.mods.dmgBonus++; run.renderHud(); } },
+  /* horizontal picks — change how you play, not just the numbers */
+  flow:      { name:'Flow State', desc:'Combo window +2s, +25% combo gold',
+               apply:()=>{ run.state.mods.comboWindow += 2; run.state.mods.comboGoldMul *= 1.25; run.renderHud(); } },
+  momentum:  { name:'Momentum',  desc:'Dash +20% range, −15% cooldown',
+               apply:()=>{ run.state.mods.dashDistMul *= 1.2; run.state.mods.dashCdMul *= 0.85; run.renderHud(); } },
 };
 
 let open = false, offers = [], pending = 0, toastPending = false;
@@ -44,7 +49,7 @@ function openNextBoon(){
   if(pending <= 0 || open) return;
   pending--;
   toastPending = false;
-  const pool = ['vitality', 'clarity', 'swiftness', 'precision'];
+  const pool = ['vitality', 'clarity', 'swiftness', 'precision', 'flow', 'momentum'];
   if(run.state.level % 3 === 0) pool.push('force');
   const shuffled = gShuffle([...pool]);
   const three = [];

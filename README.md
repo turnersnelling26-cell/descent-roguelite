@@ -56,10 +56,12 @@ npm run demo:headless  # pure-Node generator demo + determinism / save checks
 - **Curriculum by floor.** Floor 1 teaches grunts and casters only (spikes + pits). Chargers, bombers, elites, wardens, and summoners unlock deeper. HP scales to a **1.6×** cap — composition carries difficulty, not sponge.
 - **Theme hazards.** Ancient snares, molten vents, frost icicles, grim wisps, verdant spores (off on the teaching floor). Bosses borrow their theme; the **Tyrant** wields two themes from earlier in *your* descent.
 - **Parkour rooms.** Jump the gaps (or walk the beams) for a vaulter's gold prize.
+- **Door runes.** Doorways you can see carry a floating rune tinted by what waits beyond — gold treasure, violet elite, blue shrine, red boss lair. Routing is a choice, not a wander; runes retire once you enter, and scouted doors echo on the minimap.
+- **Room-clear bonus.** The last foe of a real room fight pays bonus gold with a chime — every room is its own little victory.
 
 ### Combat & builds
 - **Six weapons.** Rusted Blade (mobile crits), Stone Hammer, Ember Wand, plus unlockable **Twin Fangs**, **Warden Spear** (shield-piercing arc), and **Frost Rod** (slow). Near a token, press **1** to take it — your old weapon drops in place. Swaps are never lost.
-- **Level-up boons.** One of three choices (Vitality, Clarity, Swiftness, Precision, Force) instead of invisible +HP only.
+- **Level-up boons.** One of three choices — stat picks (Vitality, Clarity, Swiftness, Precision, Force) plus playstyle picks (**Flow State** combos, **Momentum** dashes).
 - **Relics & curses.** Two dozen shrine relics (Cartographer's Orb pings the map without killing fog) plus four **cursed altar** options for opt-in risk.
 - **Elites** (floor 3+): Swift, Stony, Vampiric, Volatile — visible risk, better spoils.
 
@@ -74,7 +76,9 @@ npm run demo:headless  # pure-Node generator demo + determinism / save checks
 - **Rest.** Save at the Wayshop and resume later (one slot; cleared on death).
 
 ### Feel
-- Fog-of-war **minimap**, floating damage numbers, crits, combos, heart drops, **mimic tells** (warm tint + hum), dash trails / Echo Step decoy, boss intros, low-HP heartbeat.
+- **Hero-scale camera.** The forge shows the whole dungeon, then the view dives down to your character; wheel zoom always wins.
+- **A carried lantern** keeps you in a readable pool of light between torch-lit rooms; frost icicles hold their fire until you take your first step.
+- Fog-of-war **minimap** (ward-break pings the lair), floating damage numbers, room-clear chimes, crits, combos, heart drops, **mimic tells** (warm tint + hum), dash trails / Echo Step decoy, boss intros, low-HP heartbeat.
 - **Procedural audio** via Web Audio — no sound files.
 
 ---

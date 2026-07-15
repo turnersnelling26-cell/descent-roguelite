@@ -35,6 +35,10 @@ let plates = null, spikes = null, traps = [], lastHitAt = -1e9;
 let pitMeshes = [], pits = [], lastSafe = { x:0, z:0 };
 let themed = [], themeKind = '', themeMeshes = [];
 let icicleRing = null, icicleCone = null, icicle = { state:'idle', at:-1e9, x:0, z:0 };
+/* frost pacing: re-armed each forge so the first strike never greets the spawn.
+   The sky holds its fire until the player takes their first step. */
+let icicleGap = 3.6, icicleArm = true, icicleAwake = false, armX = 0, armZ = 0;
+const ICICLE_GRACE = 2.5;
 
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(),
       _s = new THREE.Vector3(), _m = new THREE.Matrix4(), _c = new THREE.Color();
@@ -147,7 +151,11 @@ export function spawnHazards(D, themeKey){
   themeMeshes.forEach(m=>m.visible = false);
   icicleRing.material.opacity = 0; icicleCone.visible = false; icicle.state = 'idle';
   const light = !floorThemeHazards(run.state.floor); // floor 1 still gets a taste
-  if(themeKey === 'frost') return;                       // frost is the global icicle controller
+  if(themeKey === 'frost'){                              // frost is the global icicle controller
+    icicleGap = light ? 7.5 : 3.6;                       // floor 1: a taste, not a barrage
+    icicleArm = true; icicleAwake = false;               // hold fire until the player moves
+    return;
+  }
   const KINDS = {
     ancient: { n: light ? 3 : 8, color:0x9b6cf0 },
     molten:  { n: light ? 3 : 8, color:0xff7a30 },
@@ -214,7 +222,14 @@ function updatePits(){ /* no-op: damaging pits retired in favor of parkour gaps 
 function updateThemed(dt, D, player, pp, t){
   /* frost: a warning ring finds you, then the ceiling lets go */
   if(themeKind === 'frost'){
-    if(icicle.state === 'idle' && t - icicle.at > 3.6){
+    if(icicleArm){ icicleArm = false; armX = pp.x; armZ = pp.z; }
+    if(!icicleAwake){
+      /* asleep until the first step — reading the floor intro is always safe */
+      if(Math.hypot(pp.x - armX, pp.z - armZ) < 0.75) return;
+      icicleAwake = true;
+      icicle.at = t + ICICLE_GRACE - icicleGap;
+    }
+    if(icicle.state === 'idle' && t - icicle.at > icicleGap){
       icicle.state = 'warn'; icicle.at = t;
       icicle.x = pp.x; icicle.z = pp.z;
       icicleRing.position.set(icicle.x, 0.03, icicle.z);
