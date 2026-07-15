@@ -106,11 +106,7 @@ export function updateLoot(dt, D, player, t){
       if(t - it.twitchAt > 2.2){ it.twitchAt = t; }
       const twitch = (t - it.twitchAt < 0.15) ? 1.06 : 1.0;
       sc *= twitch;
-      /* faint hum within 4 tiles — learnable Discovery micro-skill */
-      const dMim = Math.hypot(pp.x - it.x, pp.z - it.z);
-      if(dMim < 4 && g >= 0.5){
-        if(!it.humAt || t - it.humAt > 1.4){ it.humAt = t; sfx.mimicHum(); }
-      }
+      /* mimic tell is visual only (warm tint + twitch) — no hum */
     }
     o.position.set(it.x, 1.1 + 0.1*Math.sin(t*2.4 + it.ph), it.z);
     o.rotation.y = t*1.4 + it.ph;

@@ -17,6 +17,7 @@ import * as run from './state.js';
 import { FINAL_FLOOR } from './state.js';
 import { WEAPONS } from './weapons.js';
 import { gRaw } from './rng.js';
+import { isMazeRoom } from './parkour.js';
 import { noteKill } from './save.js';
 import {
   floorHpMul, floorEliteChance, rollArchetypeForFloor, rollEliteAffix,
@@ -273,9 +274,15 @@ export function spawnEnemies(D){
     }
   }
   let bossPlaced = false;
+  let mazeSkip = 0;
   for(const sp of D.spawns){
     if(list.length >= CAP) break;
     if(safeRooms.has(sp.roomId) && sp.roomId !== bossRoomId) continue;
+    /* maze rooms: sparse foes so parkour reads as traversal, not another kill-box */
+    if(isMazeRoom(sp.roomId) && sp.roomId !== bossRoomId){
+      mazeSkip++;
+      if(mazeSkip % 3 !== 1) continue; // keep ~1/3 of spawns
+    }
     /* also skip spawns very near entrance center */
     const ent = D.rooms[D.entrance];
     if(ent && Math.abs(sp.x - ent.cx) + Math.abs(sp.y - ent.cy) < 6) continue;
@@ -507,10 +514,25 @@ function updateProjectiles(dt, D, t){
 /* environmental damage (spike traps etc.) — hurts enemies too; their deaths
    count as kills, feed relics, and chip the boss ward quota */
 export function damageEnemiesAt(x, z, r, dmg, D, t, except = null){
+  let hits = 0;
   for(const e of list){
     if(!e.alive || e === except) continue;
-    if(Math.hypot(e.x - x, e.z - z) < r) damageEnemy(e, dmg, 0.3, x, z, D, t);
+    if(Math.hypot(e.x - x, e.z - z) < r){
+      damageEnemy(e, dmg, 0.3, x, z, D, t);
+      hits++;
+    }
   }
+  return hits;
+}
+
+/** Living foes inside a world-space radius (theme hazards / goals). */
+export function countEnemiesAt(x, z, r){
+  let n = 0;
+  for(const e of list){
+    if(!e.alive || e.gone) continue;
+    if(Math.hypot(e.x - x, e.z - z) < r) n++;
+  }
+  return n;
 }
 
 export function tryAttack(player, D, t){
@@ -542,12 +564,14 @@ export function tryAttack(player, D, t){
   const crit = Math.random() < run.effectiveCrit(w.crit);
   const dmg = (w.dmg + run.effectiveDmgBonus()) * (crit ? 2 : 1);
   const hitList = [];
-  /* front cone so facing matters (spear narrow, hammer wide) */
-  const arc = w.arcDeg || (w.key === 'hammer' ? 150 : w.key === 'fangs' ? 95 : 115);
+  /* wide front cone — Space should feel generous; facing still matters at the edges */
+  const arc = w.arcDeg || (w.key === 'hammer' ? 175 : w.key === 'fangs' ? 140 : 160);
+  /* slight hitbox padding so blocky mobs near reach still register */
+  const reach = w.radius + 0.22;
   for(const e of list){
     if(!e.alive) continue;
     const dist = Math.hypot(e.x - pp.x, e.z - pp.z);
-    if(dist > w.radius) continue;
+    if(dist > reach) continue;
     const ang = Math.atan2(e.x - pp.x, e.z - pp.z);
     let diff = ang - face;
     while(diff > Math.PI) diff -= Math.PI*2;

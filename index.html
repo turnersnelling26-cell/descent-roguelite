@@ -87,27 +87,30 @@
           <div class="kb"><span>Pan · Zoom · Orbit</span><b>drag · wheel · right-drag</b></div>
           <div class="kb"><span>Generator tools</span><b>`</b></div>
         </div>
-        <p class="tip">Five floors of fog and fights. Junction rooms hide parkour mazes — jump the missing blocks for a prize. Level-ups wait until the room is clear. Warm orange chests can bite. The Tyrant waits on floor five.</p>
+        <p class="tip">Five floors. Each theme teaches a different hazard (runes, vents, icicles, wisps, spores). Side goals — maze prize, shrine, explore, theme lesson — pay gold without blocking the boss. Level-ups wait until the room is clear. Warm orange chests can bite.</p>
       </details>
 
       <!-- META / STATS -->
-      <details class="sec help" open>
-        <summary>Records &amp; meta</summary>
-        <div class="kbs" id="metaStats"></div>
-        <label class="chk"><input type="checkbox" id="explorerMode"> Explorer mode (−25% damage ◎)</label>
-        <div id="heatToggles" style="display:none;margin-top:8px">
-          <div class="olab">HEAT (after first win)</div>
-          <label class="chk"><input type="checkbox" data-heat="swift"> Swift Foes</label>
-          <label class="chk"><input type="checkbox" data-heat="scarce"> Scarce Shrines</label>
-          <label class="chk"><input type="checkbox" data-heat="hungry"> Hungry Dark</label>
-          <label class="chk"><input type="checkbox" data-heat="iron"> Iron Tyrants</label>
-          <label class="chk"><input type="checkbox" data-heat="fickle"> Fickle Fortune</label>
-        </div>
-        <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
-          <input id="shareIn" type="text" placeholder="DSC-seed-heat" style="flex:1;min-width:8em" aria-label="Share code">
-          <button class="btn" id="applyShare" type="button">Load</button>
-          <button class="btn" id="playDaily" type="button">Daily</button>
-          <button class="btn" id="resumeRest" type="button" style="display:none">Resume Rest</button>
+      <details class="sec help meta" open>
+        <summary>Records</summary>
+        <div class="meta-best" id="metaBest"></div>
+        <div class="kbs meta-stats" id="metaStats"></div>
+        <div class="meta-opts">
+          <label class="chk"><input type="checkbox" id="explorerMode"> Explorer (−25% dmg ◎)</label>
+          <div id="heatToggles" class="heat-box" style="display:none">
+            <div class="olab">Heat modifiers</div>
+            <label class="chk"><input type="checkbox" data-heat="swift"> Swift</label>
+            <label class="chk"><input type="checkbox" data-heat="scarce"> Scarce</label>
+            <label class="chk"><input type="checkbox" data-heat="hungry"> Hungry</label>
+            <label class="chk"><input type="checkbox" data-heat="iron"> Iron</label>
+            <label class="chk"><input type="checkbox" data-heat="fickle"> Fickle</label>
+          </div>
+          <div class="row meta-row">
+            <input id="shareIn" type="text" placeholder="DSC-seed-heat" aria-label="Share code">
+            <button class="btn" id="applyShare" type="button">Load</button>
+            <button class="btn" id="playDaily" type="button">Daily</button>
+            <button class="btn" id="resumeRest" type="button" style="display:none">Resume</button>
+          </div>
         </div>
       </details>
 

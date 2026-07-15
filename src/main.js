@@ -21,7 +21,7 @@ import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } 
 import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
 import { createHazards, spawnHazards, updateHazards, hazardStats } from './game/hazards.js';
 import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats, resetShopRun } from './game/shop.js';
-import { createParkour, spawnParkour, updateParkour, parkourStats } from './game/parkour.js';
+import { createParkour, spawnParkour, updateParkour, parkourStats, isMazeRoom } from './game/parkour.js';
 import { createAltars, spawnAltars, updateAltars, selectAltar, altarActive } from './game/altars.js';
 import { selectBoon, boonOpen, queueLevelBoon, tickBoonOffer } from './game/boons.js';
 import { RELICS, ALL_RELIC_KEYS } from './game/relics.js';
@@ -37,6 +37,7 @@ import {
 } from './game/save.js';
 import { floorTease } from './game/curriculum.js';
 import { updateHints, hintDashMana, hintElite, deathTip } from './game/hints.js';
+import { resetGoals, updateGoals, goalsSummary, themeGoalHint } from './game/goals.js';
 
 /* ================================================================
    DESCENT — renderer + game loop
@@ -1563,12 +1564,13 @@ function finishAnim(){
   settleAll(); setOverlayStatic(); setStageDone();
   spawnPlayer(player, D);
   refreshPlayerWeapon(player);
+  spawnParkour(D);                                 // mazes first so enemy densing can skip them
   spawnEnemies(D);
   spawnLoot(D);
   spawnShrines(D);
-  spawnParkour(D);                                 // registers the obstacle mask
   spawnHazards(D, D.params.themeKey);
   spawnAltars(D);
+  resetGoals(D, D.params.themeKey);
   if(run.state.floor >= 3) hintElite();
   { const es = enemyStats();                       // ward quota = foes outside the lair
     spawnSeal(D, es.total - es.bossFoes.length); }
@@ -1577,6 +1579,11 @@ function finishAnim(){
   fogMark(D, player.root.position.x, player.root.position.z, elapsed);
   fogRefresh();
   sfx.boom();
+  {
+    const pk = parkourStats();
+    if(pk.rooms > 0)
+      showToast('Maze room nearby — jump gaps (C) for a prize · ' + pk.blocks + ' blocks');
+  }
 }
 
 /* -------- run / descent / game-over -------- */
@@ -1836,34 +1843,43 @@ function liveUpdate(time, tt){
   }
 }
 
-/* -------- objective line — driven by room semantics + combat state -------- */
+/* -------- objective line — main goal + discovery side goals -------- */
 let lastObj = '', lastProg = '';
 function updateObjective(){
   if(!D) return;
   const s = enemyStats(), sl = sealStats();
   const finalFloor = run.state.floor >= FINAL_FLOOR;
-  /* progress reads as an ascending tally (matches the victory banner), not a
-     countdown — clearing the boss lair wins the floor, not every last spawn */
-  const prog = run.state.kills + ' slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' ⛃';
+  const gs = goalsSummary();
+  const prog = run.state.kills + ' slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' chests · ' + gs.short;
   let obj, progLine = prog;
   const tease = floorTease(run.state.floor);
-  const teachWindow = (elapsed - floorStartElapsed) < 10 && tease && !s.won;
-  if(teachWindow){
+  const themeHint = themeGoalHint(D.params?.themeKey || run.state.floorTheme);
+  const teachWindow = (elapsed - floorStartElapsed) < 12 && !s.won;
+  if(teachWindow && tease){
     obj = tease;
-    progLine = 'Floor ' + run.state.floor + ' · ' + prog;
+    progLine = themeHint + ' · ' + prog;
+  }
+  else if(teachWindow){
+    obj = themeHint;
+    progLine = prog;
   }
   else if(s.won){
     obj = finalFloor ? 'The depths are conquered!' : 'Descend through the portal';
-    progLine = finalFloor ? 'Press R for a new descent' : 'Step into the glowing portal';
+    progLine = finalFloor ? 'Press R for a new descent' : 'Step into the glowing portal · ' + gs.short;
   }
   else if(sl.sealed){
     obj = 'Shatter the ward on the boss lair';
-    progLine = sl.have + '/' + sl.need + ' foes slain · ' + run.state.chests + '/' + run.state.chestsTotal + ' ⛃';
+    progLine = sl.have + '/' + sl.need + ' foes · ' + gs.short;
   }
   else if(!s.bossAlive) obj = 'Clear the last of them';
-  else if(s.alive > s.bossAlive) obj = finalFloor ? 'Reach the final lair' : 'Fight toward the boss lair';
+  else if(s.alive > s.bossAlive){
+    obj = finalFloor ? 'Reach the final lair' : 'Fight toward the boss lair';
+    const pending = (gs.goals || []).find(g => !g.done);
+    if(pending)
+      progLine = pending.label + (pending.need > 1 ? (' ' + pending.have + '/' + pending.need) : '') + ' · ' + prog;
+  }
   else obj = finalFloor ? 'Fell the Tyrant of the Depths' : 'Slay the boss';
-  if(obj      !== lastObj){  el.objective.textContent = obj;      lastObj  = obj; }
+  if(obj !== lastObj){  el.objective.textContent = obj;      lastObj  = obj; }
   if(progLine !== lastProg){ el.floorProg.textContent = progLine; lastProg = progLine; }
 
   /* boss just fell → portal on ordinary floors, triumph on the final one */
@@ -1894,7 +1910,9 @@ function tick(){
     if(animT > animEnd + 0.35) finishAnim();
   }
   liveUpdate(elapsed, animating ? animT - 2.3 : Infinity);
-  if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen() && !boonOpen() && !paused){
+  /* menus freeze the world — shop, level-up, shrine, and altar all lock combat */
+  const menuFrozen = shopOpen() || boonOpen() || shrineActive() || altarActive();
+  if(!animating && player.root.visible && !run.state.dead && !gameOver && !menuFrozen && !paused){
     run.tickRegen(dt);
     /* level-ups wait until no foes nearby — menus never mid-scrum */
     tickBoonOffer(combatNearby(player, 7.5));
@@ -1922,6 +1940,7 @@ function tick(){
     updateParkour(dt, D, player, elapsed);
     updateAltars(dt, D, player, elapsed);
     updateHints(player, elapsed);
+    updateGoals(D);
     updateObjective();
     if(portalOpen) updatePortal(elapsed);
     minimapDraw();
@@ -2038,19 +2057,27 @@ document.getElementById('altarLeave')?.addEventListener('click', ()=>selectAltar
 
 function refreshMetaPanel(){
   const s = getSave();
+  const best = document.getElementById('metaBest');
+  if(best){
+    const floor = s.best.floor || 0;
+    const wins = s.wins || 0;
+    best.innerHTML =
+      '<div class="meta-hero"><span class="mh-lab">Best floor</span><b>'+floor+(s.best.heat?' · H'+s.best.heat:'')+'</b></div>'+
+      '<div class="meta-hero"><span class="mh-lab">Wins</span><b>'+wins+' / '+(s.runs||0)+'</b></div>';
+  }
   const box = document.getElementById('metaStats');
   if(box){
-    const hist = (s.history || []).slice(0, 5).map(h=>
-      'F'+h.floor+(h.won?' ✓':'')+(h.explorer?' ◎':'')+(h.heat?' h'+h.heat:'')
+    const hist = (s.history || []).slice(0, 4).map(h=>
+      'F'+h.floor+(h.won?'✓':'')+(h.explorer?'◎':'')
     ).join(' · ') || '—';
     const t = s.tallies || {};
+    const kills = (t.grunt|0)+(t.caster|0)+(t.charger|0)+(t.bomber|0)+(t.warden|0)+(t.summoner|0)+(t.boss|0)+(t.mega|0);
     box.innerHTML =
-      '<div class="kb"><span>Best</span><b>Floor '+s.best.floor+(s.best.heat?' · heat '+s.best.heat:'')+'</b></div>'+
-      '<div class="kb"><span>Runs / Wins</span><b>'+s.runs+' / '+s.wins+'</b></div>'+
-      (s.bestExplorer.floor ? '<div class="kb"><span>Explorer best</span><b>Floor '+s.bestExplorer.floor+' ◎</b></div>' : '')+
-      '<div class="kb"><span>Recent</span><b>'+hist+'</b></div>'+
-      '<div class="kb"><span>Kills</span><b>g'+t.grunt+' c'+t.caster+' ch'+t.charger+'</b></div>'+
-      '<div class="kb"><span>Share</span><b>'+encodeShare(runSeed, run.state.heat)+'</b></div>';
+      (s.bestExplorer?.floor ? '<div class="kb"><span>Explorer best</span><b>F'+s.bestExplorer.floor+'</b></div>' : '')+
+      '<div class="kb"><span>Recent runs</span><b>'+hist+'</b></div>'+
+      '<div class="kb"><span>Foes slain</span><b>'+kills+'</b></div>'+
+      '<div class="kb"><span>Chests · Mazes</span><b>'+(t.chests|0)+' · '+(t.parkourPrizes|0)+'</b></div>'+
+      '<div class="kb"><span>This seed</span><b>'+encodeShare(runSeed, run.state.heat)+'</b></div>';
   }
   const heatBox = document.getElementById('heatToggles');
   if(heatBox){
@@ -2134,10 +2161,11 @@ addEventListener('keydown', e=>{
     el.seed.value = 1 + Math.floor(Math.random()*999999); forge(true);
   }
   else if(e.code==='KeyC'){
-    if(!animating && player.root.visible && !run.state.dead && !gameOver && !paused && !boonOpen()) tryJump(elapsed);
+    if(!animating && player.root.visible && !run.state.dead && !gameOver && !paused
+      && !boonOpen() && !shrineActive() && !altarActive() && !shopOpen()) tryJump(elapsed);
   }
   else if(e.code==='Escape'){
-    if(shopOpen() || boonOpen() || animating || gameOver || run.state.dead) return;
+    if(shopOpen() || boonOpen() || shrineActive() || altarActive() || animating || gameOver || run.state.dead) return;
     paused = !paused;
     document.getElementById('pause')?.classList.toggle('show', paused);
   }
@@ -2156,7 +2184,8 @@ addEventListener('keydown', e=>{
   else if(e.code==='KeyP'){ el.tPost.checked = !el.tPost.checked; POST.enabled = el.tPost.checked; }
   else if(e.code==='Backquote'){ e.preventDefault(); toggleDev(); }
   else if(e.code==='ShiftLeft' || e.code==='ShiftRight'){
-    if(!animating && player.root.visible && !run.state.dead && !boonOpen()){
+    if(!animating && player.root.visible && !run.state.dead
+      && !boonOpen() && !shrineActive() && !altarActive() && !shopOpen()){
       if(failedDashNoMana()) hintDashMana();
       else tryDash(player, elapsed);
     }
@@ -2164,7 +2193,9 @@ addEventListener('keydown', e=>{
   else if(e.code==='Space'){
     e.preventDefault();
     if(animating) finishAnim();
-    else if(player.root.visible && !run.state.dead && !boonOpen()) tryAttack(player, D, elapsed);
+    else if(player.root.visible && !run.state.dead
+      && !boonOpen() && !shrineActive() && !altarActive() && !shopOpen())
+      tryAttack(player, D, elapsed);
   }
 });
 

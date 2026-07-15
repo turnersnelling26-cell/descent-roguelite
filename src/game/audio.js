@@ -1,17 +1,15 @@
 /**
  * Procedural sound — Web Audio only, zero audio files.
- * SFX one-shots + a very faint looping ambient pad (music).
+ * SFX one-shots only (no ambient drone — real music can be layered later).
  *
  * AudioContext starts after a user gesture (main.js → ensureAudio).
  */
 let ctx = null, master = null, muted = false, plays = 0;
-let musicGain = null, musicNodes = null;
 let noiseBuf = null;
 
 export function ensureAudio(){
   if(ctx){
     if(ctx.state === 'suspended') ctx.resume();
-    startAmbient();
     return;
   }
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -20,65 +18,15 @@ export function ensureAudio(){
   master = ctx.createGain();
   master.gain.value = 0.35;
   master.connect(ctx.destination);
-  startAmbient();
-}
-
-/** Faint dark pad — slow drones under everything. Mute follows master mute. */
-function startAmbient(){
-  if(!ctx || musicNodes) return;
-  musicGain = ctx.createGain();
-  musicGain.gain.value = muted ? 0 : 0.028; // very quiet
-  musicGain.connect(ctx.destination);
-
-  const mkDrone = (freq, type, detune) => {
-    const o = ctx.createOscillator();
-    o.type = type;
-    o.frequency.value = freq;
-    o.detune.value = detune;
-    const g = ctx.createGain();
-    g.gain.value = 0.22;
-    /* slow volume breath */
-    const lfo = ctx.createOscillator();
-    const lfoG = ctx.createGain();
-    lfo.frequency.value = 0.04 + Math.random() * 0.03;
-    lfoG.gain.value = 0.06;
-    lfo.connect(lfoG); lfoG.connect(g.gain);
-    o.connect(g); g.connect(musicGain);
-    o.start(); lfo.start();
-    return { o, lfo, g };
-  };
-
-  /* low fifth + soft noise bed */
-  const d1 = mkDrone(55, 'sine', 0);
-  const d2 = mkDrone(82.5, 'triangle', -8);
-  const d3 = mkDrone(110, 'sine', 6);
-
-  const noiseSrc = ctx.createBufferSource();
-  if(!noiseBuf){
-    noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-    const d = noiseBuf.getChannelData(0);
-    for(let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  }
-  noiseSrc.buffer = noiseBuf;
-  noiseSrc.loop = true;
-  const nf = ctx.createBiquadFilter();
-  nf.type = 'lowpass'; nf.frequency.value = 280; nf.Q.value = 0.5;
-  const ng = ctx.createGain();
-  ng.gain.value = 0.04;
-  noiseSrc.connect(nf); nf.connect(ng); ng.connect(musicGain);
-  noiseSrc.start();
-
-  musicNodes = { d1, d2, d3, noiseSrc, nf, ng };
 }
 
 export function setMuted(on){
   muted = on;
   if(master) master.gain.value = on ? 0 : 0.35;
-  if(musicGain) musicGain.gain.value = on ? 0 : 0.028;
 }
 
 export function audioStats(){
-  return { state: ctx ? ctx.state : 'none', muted, plays, music: !!musicNodes };
+  return { state: ctx ? ctx.state : 'none', muted, plays, music: false };
 }
 
 /* -------- tiny synth building blocks -------- */
@@ -121,11 +69,8 @@ function noise(t0, dur, out, filterType='bandpass', f0=1000, f1=null, q=1){
 
 /* -------- the effects -------- */
 export const sfx = {
-  /** Soft low growl near mimics — learnable tell, not alarming. */
-  mimicHum(){ if(!live()) return; const t = ctx.currentTime;
-    osc('sine', 55, 48, t, 0.35, env(master, t, 0.35, 0.12));
-    noise(t, 0.25, env(master, t, 0.25, 0.06), 'lowpass', 180, 90, 0.6);
-  },
+  /** Visual tell only — no hum (user will add real music later). */
+  mimicHum(){ /* no-op: humming removed */ },
   swing(){ if(!live()) return; const t = ctx.currentTime;
     noise(t, 0.08, env(master, t, 0.08, 0.5), 'bandpass', 2600, 700, 1.5);
   },

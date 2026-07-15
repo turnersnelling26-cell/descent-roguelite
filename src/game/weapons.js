@@ -5,13 +5,13 @@
 export const WEAPONS = {
   blade: {
     key:'blade',  name:'Rusted Blade',  kind:'melee',
-    dmg:1, radius:1.35, cd:0.32, knock:0.5, speedTag:'Fast · Crit',
-    color:0x9ffdea, crit:0.20, moveWhileHeld:1.12,
+    dmg:1, radius:1.95, cd:0.30, knock:0.55, speedTag:'Fast · Crit',
+    color:0x9ffdea, crit:0.20, moveWhileHeld:1.12, arcDeg:165,
   },
   hammer: {
     key:'hammer', name:'Stone Hammer',  kind:'melee',
-    dmg:3, radius:1.9, cd:0.88, knock:1.35, speedTag:'Heavy',
-    color:0xffb15a, crit:0.10,
+    dmg:3, radius:2.25, cd:0.88, knock:1.35, speedTag:'Heavy',
+    color:0xffb15a, crit:0.10, arcDeg:175,
   },
   wand: {
     key:'wand',   name:'Ember Wand',    kind:'ranged',
@@ -20,13 +20,13 @@ export const WEAPONS = {
   },
   fangs: {
     key:'fangs',  name:'Twin Fangs',    kind:'melee',
-    dmg:1, radius:1.1, cd:0.20, knock:0.15, speedTag:'Frenzy',
-    color:0xff6a9a, crit:0.25,
+    dmg:1, radius:1.55, cd:0.20, knock:0.15, speedTag:'Frenzy',
+    color:0xff6a9a, crit:0.25, arcDeg:140,
   },
   spear: {
     key:'spear',  name:'Warden Spear',  kind:'melee',
-    dmg:2, radius:2.35, cd:0.55, knock:0.95, speedTag:'Lancer',
-    color:0x8ab4ff, crit:0.10, arcDeg:95, pierceShield:true,
+    dmg:2, radius:2.55, cd:0.55, knock:0.95, speedTag:'Lancer',
+    color:0x8ab4ff, crit:0.10, arcDeg:115, pierceShield:true,
   },
   rod: {
     key:'rod',    name:'Frost Rod',     kind:'ranged',

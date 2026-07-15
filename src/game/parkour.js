@@ -1,16 +1,18 @@
 /**
- * Junction maze rooms — high-degree combat rooms become parkour courses.
+ * Junction maze rooms — combat rooms become parkour courses.
  *
- * Design goals (3.1):
+ * Design goals:
+ *   • Guaranteed: every floor gets at least one readable maze
  *   • Readable: gaps look like *removed floor blocks*, not damage pits
- *   • Fair: doorways and prize stay clear; paths always exist
+ *   • Fair: doorways and prize stay clear; walk path always exists
  *   • Skill: jump over 1-tile gaps; weave or hop onto low stone blocks
  *   • Soft fail only: landing in a gap snaps you back — never costs HP
  *
- * Styles (seeded per room):
- *   0 lanes   — horizontal bar walls with jump slots
- *   1 chasm   — a gap “river” you must hop across, with stepping stones
- *   2 courts  — block courtyards + a few void corners
+ * Styles (seeded per room, bias by theme when known):
+ *   0 lanes   — bar walls with jump slots
+ *   1 chasm   — gap river + stepping stones
+ *   2 courts  — block courtyards + void corners
+ *   3 spiral  — ring of blocks/gaps toward center prize
  */
 import * as THREE from 'three';
 import { FLOOR } from '../gen/dungeon.js';
@@ -22,9 +24,12 @@ import { sfx } from './audio.js';
 import { gI, gChance } from './rng.js';
 import { noteParkour } from './save.js';
 
-const CAP = 200, MAX_ROOMS = 3, GAP_CAP = 72;
+const CAP = 280, MAX_ROOMS = 3, GAP_CAP = 96;
 /** Keep this many tiles free around every doorway so entry never soft-locks. */
-const DOOR_CLEAR = 2;
+const DOOR_CLEAR = 1;
+/** Room ids that became mazes this floor (enemies spawn sparsely there). */
+let mazeRoomIds = new Set();
+let prizesTaken = 0;
 
 let blocks = null, placed = [], rewards = [], rewardMeshes = [];
 let gaps = [], gapMeshes = [];
@@ -178,29 +183,26 @@ function carveSafeRoutes(D, r, mask, gapMask, prizeX, prizeZ){
 
 function layoutLanes(D, r, mask, gapMask, keep){
   const { x0, x1, z0, z1 } = roomBounds(r);
-  const spacing = 2 + gI(0, 1);
+  const spacing = 2; // tight bars so the maze is unmistakable
   for(let z = z0 + 1; z <= z1 - 1; z += spacing){
-    const gapSlot = x0 + 2 + gI(0, Math.max(0, x1 - x0 - 4));
-    const gapSlot2 = x0 + 2 + gI(0, Math.max(0, x1 - x0 - 4));
+    const gapSlot = x0 + 1 + gI(0, Math.max(0, x1 - x0 - 2));
+    const gapSlot2 = x0 + 1 + gI(0, Math.max(0, x1 - x0 - 2));
     for(let x = x0 + 1; x <= x1 - 1; x++){
       if(!cellOk(D, x, z, r) || keep[z * D.W + x]) continue;
       if(x === gapSlot || x === gapSlot2){
-        /* single-tile jump slot in the wall */
         gapMask[z * D.W + x] = 1;
       } else {
         mask[z * D.W + x] = 1;
       }
     }
   }
-  /* optional second-axis short walls for interest */
-  if(gChance(0.55)){
-    for(let x = x0 + 2; x <= x1 - 2; x += 3 + gI(0, 1)){
-      for(let z = z0 + 2; z <= z1 - 2; z++){
-        if(!cellOk(D, x, z, r) || keep[z * D.W + x]) continue;
-        if(mask[z * D.W + x] || gapMask[z * D.W + x]) continue;
-        if((z - z0) % 3 === 1) gapMask[z * D.W + x] = 1;
-        else if(gChance(0.35)) mask[z * D.W + x] = 1;
-      }
+  /* cross-axis walls for a real grid maze feel */
+  for(let x = x0 + 2; x <= x1 - 2; x += 2 + gI(0, 1)){
+    for(let z = z0 + 1; z <= z1 - 1; z++){
+      if(!cellOk(D, x, z, r) || keep[z * D.W + x]) continue;
+      if(mask[z * D.W + x] || gapMask[z * D.W + x]) continue;
+      if((z - z0) % 4 === 2) gapMask[z * D.W + x] = 1;
+      else if(gChance(0.55)) mask[z * D.W + x] = 1;
     }
   }
 }
@@ -248,55 +250,76 @@ function layoutChasm(D, r, mask, gapMask, keep){
 
 function layoutCourts(D, r, mask, gapMask, keep){
   const { x0, x1, z0, z1 } = roomBounds(r);
-  /* pillar grid */
-  for(let z = z0 + 2; z <= z1 - 2; z += 3){
-    for(let x = x0 + 2; x <= x1 - 2; x += 3){
+  /* denser pillar grid — clearly a maze, not empty combat */
+  for(let z = z0 + 1; z <= z1 - 1; z += 2){
+    for(let x = x0 + 1; x <= x1 - 1; x += 2){
       if(!cellOk(D, x, z, r) || keep[z * D.W + x]) continue;
       mask[z * D.W + x] = 1;
-      /* sometimes a 2×1 L of blocks */
-      if(gChance(0.4) && cellOk(D, x + 1, z, r) && !keep[z * D.W + x + 1])
+      if(gChance(0.55) && cellOk(D, x + 1, z, r) && !keep[z * D.W + x + 1])
         mask[z * D.W + x + 1] = 1;
     }
   }
-  /* void corners / pockets — single tiles only */
   const corners = [
     [x0 + 2, z0 + 2], [x1 - 2, z0 + 2], [x0 + 2, z1 - 2], [x1 - 2, z1 - 2],
+    [Math.round(r.cx) - 2, Math.round(r.cy)], [Math.round(r.cx) + 2, Math.round(r.cy)],
   ];
   for(const [x, z] of corners){
-    if(cellOk(D, x, z, r) && !keep[z * D.W + x] && gChance(0.7)){
+    if(cellOk(D, x, z, r) && !keep[z * D.W + x] && gChance(0.85)){
       mask[z * D.W + x] = 0;
       gapMask[z * D.W + x] = 1;
     }
   }
-  /* sparse mid gaps */
-  for(let n = 0; n < 4; n++){
-    const x = x0 + 2 + gI(0, Math.max(0, x1 - x0 - 4));
-    const z = z0 + 2 + gI(0, Math.max(0, z1 - z0 - 4));
+  for(let n = 0; n < 8; n++){
+    const x = x0 + 1 + gI(0, Math.max(0, x1 - x0 - 2));
+    const z = z0 + 1 + gI(0, Math.max(0, z1 - z0 - 2));
     if(cellOk(D, x, z, r) && !keep[z * D.W + x] && !mask[z * D.W + x])
       gapMask[z * D.W + x] = 1;
   }
+}
+
+function layoutSpiral(D, r, mask, gapMask, keep){
+  const { x0, x1, z0, z1 } = roomBounds(r);
+  const cx = Math.round(r.cx), cz = Math.round(r.cy);
+  for(let z = z0 + 1; z <= z1 - 1; z++){
+    for(let x = x0 + 1; x <= x1 - 1; x++){
+      if(!cellOk(D, x, z, r) || keep[z * D.W + x]) continue;
+      const manh = Math.abs(x - cx) + Math.abs(z - cz);
+      if(manh < 2) continue;
+      if(manh % 3 === 0) gapMask[z * D.W + x] = 1;
+      else if(manh % 3 === 1 && ((x + z) % 2 === 0)) mask[z * D.W + x] = 1;
+    }
+  }
+}
+
+function themeStyleBias(theme){
+  /* preferred styles per theme for identity */
+  if(theme === 'molten') return [1, 0, 2, 3];   // chasm first
+  if(theme === 'frost') return [1, 3, 0, 2];
+  if(theme === 'verdant') return [2, 0, 3, 1];
+  if(theme === 'grim') return [3, 2, 1, 0];
+  if(theme === 'ancient') return [0, 3, 2, 1]; // lanes
+  return [0, 1, 2, 3];
 }
 
 function layoutMaze(D, r, mask, gapMask){
   const keep = new Uint8Array(D.W * D.H);
   markDoorClear(D, r, keep);
   const prizeX = Math.round(r.cx), prizeZ = Math.round(r.cy);
-  /* prize pad always keep */
   for(let dz = -1; dz <= 1; dz++) for(let dx = -1; dx <= 1; dx++){
     const c = (prizeZ + dz) * D.W + (prizeX + dx);
     if(c >= 0 && c < keep.length) keep[c] = 1;
   }
 
-  const style = gI(0, 2);
+  const order = themeStyleBias(run.state.floorTheme || D.params?.themeKey);
+  const style = order[gI(0, order.length - 1)];
   if(style === 0) layoutLanes(D, r, mask, gapMask, keep);
   else if(style === 1) layoutChasm(D, r, mask, gapMask, keep);
-  else layoutCourts(D, r, mask, gapMask, keep);
+  else if(style === 2) layoutCourts(D, r, mask, gapMask, keep);
+  else layoutSpiral(D, r, mask, gapMask, keep);
 
-  /* never put obstacles on keep cells */
   for(let i = 0; i < keep.length; i++){
     if(keep[i]){ mask[i] = 0; gapMask[i] = 0; }
   }
-  /* never stack block+gap */
   for(let i = 0; i < mask.length; i++){
     if(mask[i] && gapMask[i]) gapMask[i] = 0;
   }
@@ -304,22 +327,45 @@ function layoutMaze(D, r, mask, gapMask){
   carveSafeRoutes(D, r, mask, gapMask, prizeX, prizeZ);
 }
 
+function pickMazeRooms(D){
+  const ban = new Set([D.rooms[D.entrance]?.id, D.rooms[D.boss]?.id]);
+  const pool = D.rooms
+    .filter(r =>
+      (r.type === 'combat' || r.type === 'elite') &&
+      !ban.has(r.id) && !r.lake && !r.grave &&
+      r.w >= 7 && r.h >= 7
+    )
+    .sort((a, b) =>
+      ((b.degree || 0) - (a.degree || 0)) ||
+      (b.w * b.h - a.w * a.h)
+    );
+
+  const picked = pool.slice(0, MAX_ROOMS);
+  /* guarantee at least one maze every floor */
+  if(!picked.length){
+    const fallback = D.rooms
+      .filter(r => !ban.has(r.id) && r.type !== 'entrance' && r.type !== 'boss' && r.w >= 6 && r.h >= 6)
+      .sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    if(fallback[0]) picked.push(fallback[0]);
+  }
+  return picked;
+}
+
+export function mazeRooms(){ return mazeRoomIds; }
+export function isMazeRoom(id){ return mazeRoomIds.has(id); }
+
 export function spawnParkour(D){
   placed = []; rewards = []; gaps = [];
+  prizesTaken = 0;
+  mazeRoomIds = new Set();
   rewardMeshes.forEach(m=>{ m.visible = false; m.scale.setScalar(1); });
   gapMeshes.forEach(m=>{ m.visible = false; });
   const mask = new Uint8Array(D.W * D.H);
   const gapMask = new Uint8Array(D.W * D.H);
 
-  const rooms = D.rooms
-    .filter(r =>
-      r.type === 'combat' && (r.degree ?? 0) >= 3 && r.w >= 9 && r.h >= 9 &&
-      !r.lake && !r.grave
-    )
-    .sort((a, b) => (b.degree - a.degree) || (b.w * b.h - a.w * a.h))
-    .slice(0, MAX_ROOMS);
-
+  const rooms = pickMazeRooms(D);
   for(const r of rooms){
+    mazeRoomIds.add(r.id);
     const localMask = new Uint8Array(D.W * D.H);
     const localGap = new Uint8Array(D.W * D.H);
     layoutMaze(D, r, localMask, localGap);
@@ -351,7 +397,15 @@ export function spawnParkour(D){
   }
 
   blocks.count = placed.length;
-  const tones = [0x4a5368, 0x555e74, 0x3f475c, 0x5a6478, 0x464e62];
+  const theme = run.state.floorTheme || D.params?.themeKey;
+  const tonesByTheme = {
+    ancient: [0x5a5368, 0x6a6080, 0x4a4560, 0x706888],
+    molten:  [0x6a4030, 0x8a4a28, 0x5a3020, 0x7a4530],
+    frost:   [0x4a6078, 0x5a7090, 0x3a5068, 0x6a80a0],
+    grim:    [0x3a3048, 0x4a3858, 0x2a2038, 0x503e60],
+    verdant: [0x3a5840, 0x4a6850, 0x2a4830, 0x507858],
+  };
+  const tones = tonesByTheme[theme] || [0x4a5368, 0x555e74, 0x3f475c, 0x5a6478];
   placed.forEach((b, i) => blocks.setColorAt(i, _c.set(tones[i % tones.length])));
   if(blocks.instanceColor) blocks.instanceColor.needsUpdate = true;
 
@@ -412,6 +466,7 @@ export function updateParkour(dt, D, player, t){
       run.state.gold += gold;
       run.renderHud();
       noteParkour();
+      prizesTaken++;
       showToast('Maze prize — +' + gold + ' gold!');
       sfx.win();
     }
@@ -422,6 +477,9 @@ export const parkourStats = () => ({
   rooms: rewards.length,
   blocks: placed.length,
   gaps: gaps.length,
+  mazeIds: [...mazeRoomIds],
+  prizesTaken,
+  rewardsLeft: rewards.filter(r => !r.taken).length,
   rewards: rewards.filter(r => !r.taken).map(r => ({ x: +r.x.toFixed(2), z: +r.z.toFixed(2) })),
   pitPositions: gaps.slice(0, 10).map(g => ({ x: +g.x.toFixed(2), z: +g.z.toFixed(2) })),
 });

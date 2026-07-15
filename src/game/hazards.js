@@ -25,6 +25,7 @@ import { damageEnemiesAt } from './enemies.js';
 import { sfx } from './audio.js';
 import { gI, gF, gRaw } from './rng.js';
 import { floorThemeHazards } from './curriculum.js';
+import { noteThemeProgress } from './goals.js';
 
 const CAP = 24, PERIOD = 2.6, WARN_AT = 1.5, OUT_AT = 2.0, IN_AT = 2.4;
 const HIT_R = 0.62, DMG = 1, PLAYER_CD = 1.0, CONCEAL_R = 6;
@@ -140,24 +141,23 @@ export function spawnHazards(D, themeKey){
   pits = [];
   pitMeshes.forEach(m=>{ m.visible = false; });
 
-  /* themed hazard — suppressed on the teaching floor (floor 1) */
+  /* themed hazard — light on floor 1, full after (each theme has a unique verb) */
   themeKind = themeKey;
   themed = [];
   themeMeshes.forEach(m=>m.visible = false);
   icicleRing.material.opacity = 0; icicleCone.visible = false; icicle.state = 'idle';
-  if(!floorThemeHazards(run.state.floor)){
-    themeKind = '';
-    return;
-  }
+  const light = !floorThemeHazards(run.state.floor); // floor 1 still gets a taste
   if(themeKey === 'frost') return;                       // frost is the global icicle controller
   const KINDS = {
-    ancient: { n:7, color:0x9b6cf0 }, molten: { n:7, color:0xff7a30 },
-    grim:    { n:4, color:0x8a5adf }, verdant:{ n:7, color:0x7ac04a },
+    ancient: { n: light ? 3 : 8, color:0x9b6cf0 },
+    molten:  { n: light ? 3 : 8, color:0xff7a30 },
+    grim:    { n: light ? 2 : 5, color:0x8a5adf },
+    verdant: { n: light ? 3 : 8, color:0x7ac04a },
   };
   const spec = KINDS[themeKey];
   if(!spec) return;
   for(let i=0; i<spec.n && i<THEME_CAP; i++){
-    const p = pickTile(D, anyRoom, [...traps, ...pits, ...themed], 5);
+    const p = pickTile(D, anyRoom, [...traps, ...pits, ...themed], light ? 6 : 4);
     if(!p) break;
     const h = { ...p, x:p.tx - D.W/2 + 0.5, z:p.tz - D.H/2 + 0.5, ti:p.c,
                 cd:0, ph:gF(0, 4), at:-1e9, mesh:themeMeshes[i] };
@@ -214,7 +214,7 @@ function updatePits(){ /* no-op: damaging pits retired in favor of parkour gaps 
 function updateThemed(dt, D, player, pp, t){
   /* frost: a warning ring finds you, then the ceiling lets go */
   if(themeKind === 'frost'){
-    if(icicle.state === 'idle' && t - icicle.at > 4.5){
+    if(icicle.state === 'idle' && t - icicle.at > 3.6){
       icicle.state = 'warn'; icicle.at = t;
       icicle.x = pp.x; icicle.z = pp.z;
       icicleRing.position.set(icicle.x, 0.03, icicle.z);
@@ -222,6 +222,10 @@ function updateThemed(dt, D, player, pp, t){
       const k = (t - icicle.at) / 0.8;
       icicleRing.material.opacity = 0.65 * (0.5 + 0.5*Math.sin(t*14));
       icicleRing.scale.setScalar(1 - 0.3*k);
+      /* ring slowly tracks so dodging is a real decision */
+      icicle.x += (pp.x - icicle.x) * Math.min(1, 1.8 * dt);
+      icicle.z += (pp.z - icicle.z) * Math.min(1, 1.8 * dt);
+      icicleRing.position.set(icicle.x, 0.03, icicle.z);
       if(k >= 1){
         icicle.state = 'drop'; icicle.at = t;
         icicleCone.visible = true;
@@ -231,7 +235,9 @@ function updateThemed(dt, D, player, pp, t){
       icicleCone.position.set(icicle.x, 4.5*(1 - k) + 0.45, icicle.z);
       if(k >= 1){
         icicleRing.material.opacity = 0; icicleCone.visible = false;
-        if(!airborne(t) && Math.hypot(pp.x - icicle.x, pp.z - icicle.z) < 0.75) hazHit(DMG, t);
+        const hit = !airborne(t) && Math.hypot(pp.x - icicle.x, pp.z - icicle.z) < 0.75;
+        if(hit) hazHit(DMG, t);
+        else noteThemeProgress('frost'); // dodge counts toward theme goal
         damageEnemiesAt(icicle.x, icicle.z, 0.75, DMG, D, t);
         sfx.hit();
         icicle.state = 'idle'; icicle.at = t;
@@ -254,6 +260,8 @@ function updateThemed(dt, D, player, pp, t){
         h.cd = 4;
         applyRoot(t + 0.9);
         sfx.hurt();
+        /* progress when snared — surviving the root is the lesson */
+        noteThemeProgress('ancient');
       }
     } else if(themeKind === 'molten'){           // fire vent on a heartbeat
       const k = (t + h.ph) % 3.4;
@@ -264,7 +272,11 @@ function updateThemed(dt, D, player, pp, t){
       m.scale.set(0.7*g, sy*g, 0.7*g);
       m.material.color.set(jet ? 0xffb040 : (warn ? 0xff7a30 : 0x7a2e18));
       if(jet && d < 0.7 && !airborne(t)) hazHit(DMG, t);
-      if(jet && h.cd <= 0){ damageEnemiesAt(h.x, h.z, 0.7, DMG, D, t); h.cd = 0.6; }
+      if(jet && h.cd <= 0){
+        const hits = damageEnemiesAt(h.x, h.z, 0.7, DMG, D, t);
+        if(hits > 0) noteThemeProgress('molten', hits);
+        h.cd = 0.6;
+      }
     } else if(themeKind === 'grim'){             // soul wisp: drifts to you, sips mana
       if(g >= 0.99 && d < 8 && d > 0.1){
         const step = 1.6*dt;
@@ -279,6 +291,7 @@ function updateThemed(dt, D, player, pp, t){
         run.spendMana(1);                        // it drinks — no blood, just power
         applySlow(t + 0.6);
         sfx.swing();
+        noteThemeProgress('grim');
       }
     } else if(themeKind === 'verdant'){          // spore pod: swells, then bursts
       const regrown = t - h.at > 8;
@@ -292,6 +305,7 @@ function updateThemed(dt, D, player, pp, t){
         if(!airborne(t)) { hazHit(DMG, t); applySlow(t + 1.2); }
         damageEnemiesAt(h.x, h.z, 1.2, DMG, D, t);
         sfx.kill();
+        noteThemeProgress('verdant');
       }
     }
   }
