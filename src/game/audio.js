@@ -1,31 +1,84 @@
 /**
- * Procedural sound effects — Web Audio synthesis, no audio files, matching
- * the project's "nothing loaded from disk" conceit. Each sfx.* call builds a
- * tiny oscillator/noise graph with a decay envelope and lets it garbage-
- * collect when done.
+ * Procedural sound — Web Audio only, zero audio files.
+ * SFX one-shots + a very faint looping ambient pad (music).
  *
- * The AudioContext can only start after a user gesture (autoplay policy):
- * main.js wires ensureAudio() to the first keydown/pointerdown.
+ * AudioContext starts after a user gesture (main.js → ensureAudio).
  */
 let ctx = null, master = null, muted = false, plays = 0;
+let musicGain = null, musicNodes = null;
+let noiseBuf = null;
 
 export function ensureAudio(){
-  if(ctx){ if(ctx.state === 'suspended') ctx.resume(); return; }
+  if(ctx){
+    if(ctx.state === 'suspended') ctx.resume();
+    startAmbient();
+    return;
+  }
   const AC = window.AudioContext || window.webkitAudioContext;
   if(!AC) return;
   ctx = new AC();
   master = ctx.createGain();
   master.gain.value = 0.35;
   master.connect(ctx.destination);
+  startAmbient();
+}
+
+/** Faint dark pad — slow drones under everything. Mute follows master mute. */
+function startAmbient(){
+  if(!ctx || musicNodes) return;
+  musicGain = ctx.createGain();
+  musicGain.gain.value = muted ? 0 : 0.028; // very quiet
+  musicGain.connect(ctx.destination);
+
+  const mkDrone = (freq, type, detune) => {
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = freq;
+    o.detune.value = detune;
+    const g = ctx.createGain();
+    g.gain.value = 0.22;
+    /* slow volume breath */
+    const lfo = ctx.createOscillator();
+    const lfoG = ctx.createGain();
+    lfo.frequency.value = 0.04 + Math.random() * 0.03;
+    lfoG.gain.value = 0.06;
+    lfo.connect(lfoG); lfoG.connect(g.gain);
+    o.connect(g); g.connect(musicGain);
+    o.start(); lfo.start();
+    return { o, lfo, g };
+  };
+
+  /* low fifth + soft noise bed */
+  const d1 = mkDrone(55, 'sine', 0);
+  const d2 = mkDrone(82.5, 'triangle', -8);
+  const d3 = mkDrone(110, 'sine', 6);
+
+  const noiseSrc = ctx.createBufferSource();
+  if(!noiseBuf){
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for(let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  noiseSrc.buffer = noiseBuf;
+  noiseSrc.loop = true;
+  const nf = ctx.createBiquadFilter();
+  nf.type = 'lowpass'; nf.frequency.value = 280; nf.Q.value = 0.5;
+  const ng = ctx.createGain();
+  ng.gain.value = 0.04;
+  noiseSrc.connect(nf); nf.connect(ng); ng.connect(musicGain);
+  noiseSrc.start();
+
+  musicNodes = { d1, d2, d3, noiseSrc, nf, ng };
 }
 
 export function setMuted(on){
   muted = on;
   if(master) master.gain.value = on ? 0 : 0.35;
+  if(musicGain) musicGain.gain.value = on ? 0 : 0.028;
 }
 
 export function audioStats(){
-  return { state: ctx ? ctx.state : 'none', muted, plays };
+  return { state: ctx ? ctx.state : 'none', muted, plays, music: !!musicNodes };
 }
 
 /* -------- tiny synth building blocks -------- */
@@ -49,7 +102,6 @@ function osc(type, f0, f1, t0, dur, out){
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
 
-let noiseBuf = null;
 function noise(t0, dur, out, filterType='bandpass', f0=1000, f1=null, q=1){
   if(!noiseBuf){
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
@@ -120,5 +172,25 @@ export const sfx = {
   heartbeat(){ if(!live()) return; const t = ctx.currentTime;   // two low thumps
     osc('sine', 62, 40, t, 0.14, env(master, t, 0.14, 0.7));
     osc('sine', 58, 38, t + 0.22, 0.16, env(master, t + 0.22, 0.16, 0.55));
+  },
+  /** Heavy weapon whoosh */
+  heavySwing(){ if(!live()) return; const t = ctx.currentTime;
+    noise(t, 0.14, env(master, t, 0.14, 0.55), 'bandpass', 900, 200, 1.2);
+    osc('triangle', 90, 50, t, 0.12, env(master, t, 0.12, 0.35));
+  },
+  /** Soft fail: stepped into a parkour gap */
+  gapReset(){ if(!live()) return; const t = ctx.currentTime;
+    osc('sine', 140, 70, t, 0.12, env(master, t, 0.12, 0.25));
+    noise(t, 0.08, env(master, t, 0.08, 0.12), 'lowpass', 500, 120);
+  },
+  jump(){ if(!live()) return; const t = ctx.currentTime;
+    osc('sine', 180, 320, t, 0.08, env(master, t, 0.08, 0.28));
+  },
+  land(){ if(!live()) return; const t = ctx.currentTime;
+    noise(t, 0.04, env(master, t, 0.04, 0.2), 'lowpass', 600, 150);
+  },
+  block(){ if(!live()) return; const t = ctx.currentTime; // warden shield clank
+    osc('square', 400, 200, t, 0.06, env(master, t, 0.06, 0.35));
+    noise(t, 0.05, env(master, t, 0.05, 0.25), 'bandpass', 1800, 800, 2);
   },
 };

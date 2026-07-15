@@ -11,11 +11,11 @@ import { FLOOR } from '../gen/dungeon.js';
 import * as run from './state.js';
 import { sfx } from './audio.js';
 
-const SPEED = 7;      // tiles per second
+const SPEED = 7.4;    // tiles per second — snappy for maze rooms
 const RADIUS = 0.3;   // collision radius, must stay < 0.5 (one tile)
 
 /* -------- dash: a short, fast burst with i-frames, paid for in mana -------- */
-const DASH_SPEED = 20, DASH_TIME = 0.16, DASH_CD = 0.55, DASH_IFRAME = 0.24, DASH_COST = 1;
+const DASH_SPEED = 22, DASH_TIME = 0.15, DASH_CD = 0.48, DASH_IFRAME = 0.28, DASH_COST = 1;
 let dashEnd = -1e9, dashCdEnd = -1e9, dashIfrEnd = -1e9, dashX = 0, dashZ = 0;
 let velX = 0, velZ = 0;      // persisted so frozen lakes can carry momentum
 /* Echo Step decoy — taunts foes for 1.5s at dash origin */
@@ -44,13 +44,14 @@ export function failedDashNoMana(){
 }
 export const dashInvuln = t => t < dashIfrEnd;      // enemies.js skips contact damage while true
 
-/* -------- jump: a short hop that clears pits and low parkour blocks -------- */
-const JUMP_T = 0.42, JUMP_H = 0.95;
+/* -------- jump: clears parkour gaps + low blocks -------- */
+/* slightly floatier jump so 1-tile maze gaps read clearly */
+const JUMP_T = 0.48, JUMP_H = 1.22;
 let jumpEnd = -1e9;
 export function tryJump(t){
   if(t < jumpEnd || t < rootUntil) return false;    // mid-air / rooted
   jumpEnd = t + JUMP_T;
-  sfx.step();
+  if(sfx.jump) sfx.jump(); else sfx.step();
   return true;
 }
 export const airborne = t => t < jumpEnd;
@@ -66,10 +67,10 @@ export const applySlow = until => {
   slowUntil = Math.max(slowUntil, until);
 };
 
-/* -------- game-side obstacle mask (parkour blocks): walkers are blocked,
-   a jumping PLAYER passes. Registered per floor by parkour.js. -------- */
-let obMask = null;
+/* -------- parkour masks: blocks block walkers; gaps need a jump -------- */
+let obMask = null, gapMask = null;
 export const setObstacleMask = mask => { obMask = mask; };
+export const setGapMask = mask => { gapMask = mask; };
 
 /* -------- key state (held keys, not per-press) -------- */
 const held = new Set();
@@ -118,46 +119,110 @@ export function createPlayer(scene){
   }
 
   const root = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color:0x1a3d42, roughness:0.4, metalness:0.15,
+    emissive:0x3fd0bb, emissiveIntensity:0.45,
+  });
+  const matDark = new THREE.MeshStandardMaterial({
+    color:0x0e2226, roughness:0.5, metalness:0.2,
+    emissive:0x1a6060, emissiveIntensity:0.25,
+  });
+  const matGlow = new THREE.MeshBasicMaterial({ color:0x9ffdea, toneMapped:false });
 
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.28, 0.5, 4, 12),
-    new THREE.MeshStandardMaterial({ color:0x1c3a3f, roughness:0.35, metalness:0.1,
-                                     emissive:0x3fd0bb, emissiveIntensity:0.55 })
-  );
-  body.position.y = 0.78;
-  body.castShadow = true;
-  root.add(body);
+  /* Blocky adventurer — matches the environment's voxel language */
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.48, 0.36), mat);
+  torso.position.y = 0.72; torso.castShadow = true; root.add(torso);
+
+  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.22, 0.32), matDark);
+  hips.position.y = 0.42; hips.castShadow = true; root.add(hips);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), mat);
+  head.position.y = 1.12; head.castShadow = true; root.add(head);
+
+  const helm = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.12, 0.38), matDark);
+  helm.position.y = 1.30; root.add(helm);
+
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.08, 0.08), matGlow);
+  visor.position.set(0, 1.12, 0.18); root.add(visor);
+
+  const shoulderL = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.28), matDark);
+  shoulderL.position.set(-0.32, 0.88, 0); root.add(shoulderL);
+  const shoulderR = shoulderL.clone(); shoulderR.position.x = 0.32; root.add(shoulderR);
+
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.36, 0.14), mat);
+  armL.position.set(-0.34, 0.58, 0); root.add(armL);
+  const armR = armL.clone(); armR.position.x = 0.34; root.add(armR);
+
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.36, 0.16), matDark);
+  legL.position.set(-0.12, 0.18, 0); root.add(legL);
+  const legR = legL.clone(); legR.position.x = 0.12; root.add(legR);
+
+  /* body alias = torso for emissive hurt flash in enemies.js */
+  const body = torso;
 
   const core = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.12),
+    new THREE.BoxGeometry(0.14, 0.14, 0.06),
+    matGlow
+  );
+  core.position.set(0, 0.78, 0.2);
+  root.add(core);
+
+  /* held weapon block — recolored / resized per equip */
+  const weaponMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.12, 0.55),
     new THREE.MeshBasicMaterial({ color:0x9ffdea, toneMapped:false })
   );
-  core.position.y = 1.32;
-  root.add(core);
+  weaponMesh.position.set(0.38, 0.62, 0.22);
+  weaponMesh.rotation.x = -0.35;
+  root.add(weaponMesh);
 
   const light = new THREE.PointLight(0x6fe8cd, 0.9 * 4*Math.PI, 9, 2);
   light.position.y = 1.5;
   root.add(light);
 
-  /* Echo Step decoy — ghost twin left at dash origin */
   const decoyMesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.26, 0.45, 3, 8),
-    new THREE.MeshBasicMaterial({ color:0x6fe8cd, transparent:true, opacity:0.45, toneMapped:false })
+    new THREE.BoxGeometry(0.48, 0.9, 0.34),
+    new THREE.MeshBasicMaterial({ color:0x6fe8cd, transparent:true, opacity:0.4, toneMapped:false })
   );
+  decoyMesh.position.y = 0.55;
   decoyMesh.visible = false;
   scene.add(decoyMesh);
 
   root.visible = false;
   scene.add(root);
-  return { root, body, core, decoyMesh };
+  return { root, body, core, decoyMesh, head, armL, armR, legL, legR, weaponMesh };
 }
 
-/* world → tile (inverse of wx = x - W/2 + 0.5: tile x covers [x-W/2, x+1-W/2)) */
+/** Sync the blocky hand-weapon to the currently equipped kit. */
+export function refreshPlayerWeapon(player){
+  if(!player?.weaponMesh) return;
+  const w = run.state.weaponKey;
+  const mesh = player.weaponMesh;
+  const col = {
+    blade:0x9ffdea, hammer:0xffb15a, wand:0xff7a4a,
+    fangs:0xff6a9a, spear:0x8ab4ff, rod:0x9fd8ff,
+  }[w] || 0x9ffdea;
+  mesh.material.color.set(col);
+  if(w === 'hammer'){
+    mesh.scale.set(1.4, 1.4, 0.7); mesh.position.set(0.40, 0.70, 0.18);
+  } else if(w === 'spear'){
+    mesh.scale.set(0.7, 0.7, 1.8); mesh.position.set(0.36, 0.75, 0.28);
+  } else if(w === 'fangs'){
+    mesh.scale.set(0.7, 0.5, 0.55); mesh.position.set(0.34, 0.58, 0.20);
+  } else if(w === 'wand' || w === 'rod'){
+    mesh.scale.set(0.55, 0.55, 1.2); mesh.position.set(0.36, 0.72, 0.22);
+  } else {
+    mesh.scale.set(1, 1, 1); mesh.position.set(0.38, 0.62, 0.22);
+  }
+}
+
+/* world → tile */
 const tileOk = (D, wxp, wzp, ignoreObstacles)=>{
   const tx = Math.floor(wxp + D.W/2), tz = Math.floor(wzp + D.H/2);
   if(tx<0 || tz<0 || tx>=D.W || tz>=D.H) return false;
   const c = tz*D.W + tx;
   if(D.grid[c] !== FLOOR) return false;
+  if(!ignoreObstacles && gapMask && gapMask[c]) return false; // need jump to cross
   return ignoreObstacles || !obMask || !obMask[c];
 };
 export const walkable = (D, wxp, wzp)=> tileOk(D, wxp, wzp, false);
@@ -172,7 +237,7 @@ export function spawnPlayer(player, D){
   player.root.visible = true;
   velX = velZ = 0;                 // no carried momentum across floors/respawns
   jumpEnd = rootUntil = slowUntil = -1e9;
-  obMask = null;                   // parkour re-registers per floor
+  obMask = null; gapMask = null;   // parkour re-registers per floor
 }
 
 export function updatePlayer(player, dt, D, yaw, t){
@@ -181,20 +246,30 @@ export function updatePlayer(player, dt, D, yaw, t){
   if(player.decoyMesh){
     if(decoy && t < decoy.until){
       player.decoyMesh.visible = true;
-      player.decoyMesh.position.set(decoy.x, 0.78, decoy.z);
+      player.decoyMesh.position.set(decoy.x, 0.55, decoy.z);
       player.decoyMesh.material.opacity = 0.25 + 0.25 * ((decoy.until - t) / 1.5);
     } else player.decoyMesh.visible = false;
   }
 
-  /* jump arc: a parabola over JUMP_T seconds (movement continues underneath) */
+  /* jump arc + stand-on-block */
   const jk = 1 - (jumpEnd - t)/JUMP_T;
-  /* landed on a parkour block? stand on top of it (and keep obstacle-passing
-     movement so you can walk along or hop off — never wedged inside) */
   const ftx = Math.floor(p.x + D.W/2), ftz = Math.floor(p.z + D.H/2);
   const onBlock = obMask && ftx>=0 && ftz>=0 && ftx<D.W && ftz<D.H && obMask[ftz*D.W + ftx] === 1;
   const air = airborne(t) || onBlock;
-  p.y = (jk >= 0 && jk <= 1) ? Math.max(onBlock ? 0.55 : 0, JUMP_H * Math.sin(Math.PI*jk))
-                             : (onBlock ? 0.55 : 0);
+  p.y = (jk >= 0 && jk <= 1) ? Math.max(onBlock ? 0.58 : 0, JUMP_H * Math.sin(Math.PI*jk))
+                             : (onBlock ? 0.58 : 0);
+
+  /* subtle run bob on limbs for blocky puppet feel */
+  if(player.armL && player.legL){
+    const moving = Math.hypot(velX, velZ) > 0.4 || t < dashEnd;
+    const bob = moving ? Math.sin(t * 14) * 0.12 : 0;
+    player.armL.rotation.x = bob; player.armR.rotation.x = -bob;
+    player.legL.rotation.x = -bob; player.legR.rotation.x = bob;
+    if(player.weaponMesh){
+      player.weaponMesh.rotation.x = -0.35 + bob * 0.4;
+      player.weaponMesh.rotation.z = bob * 0.2;
+    }
+  }
 
   /* dash trail fade */
   updateTrail(t);

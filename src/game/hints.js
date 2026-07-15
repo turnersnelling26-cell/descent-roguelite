@@ -4,7 +4,6 @@
 import { markHint, getSave } from './save.js';
 import { showToast } from './loot.js';
 import * as run from './state.js';
-import { hazardStats } from './hazards.js';
 import { parkourStats } from './parkour.js';
 
 let floatEl = null, floatTimer = null;
@@ -29,24 +28,17 @@ export function updateHints(player, t){
   const pp = player.root.position;
   const h = getSave().hints;
 
-  /* pits nearby */
-  if(!h.pit){
-    const pits = hazardStats().pitPositions || [];
-    for(const p of pits){
-      if(Math.hypot(pp.x - p.x, pp.z - p.z) < 6){
-        if(markHint('pit')) floatHint('C — jump');
-        break;
-      }
-    }
-  }
-
-  /* parkour */
-  if(!h.parkour){
+  /* parkour maze gaps / blocks */
+  if(!h.parkour || !h.pit){
     const pk = parkourStats();
-    if(pk.blocks > 0 && pk.rewards?.length){
-      const r = pk.rewards[0];
-      if(Math.hypot(pp.x - r.x, pp.z - r.z) < 10){
-        if(markHint('parkour')) floatHint('Jump the beams — a prize waits');
+    if(pk.blocks > 0 || pk.gaps > 0){
+      const near = (pk.pitPositions || []).some(p => Math.hypot(pp.x - p.x, pp.z - p.z) < 7)
+        || (pk.rewards || []).some(r => Math.hypot(pp.x - r.x, pp.z - r.z) < 10);
+      if(near){
+        if(!h.parkour && markHint('parkour'))
+          floatHint('Junction maze — C jump dark gaps & low blocks · prize at center');
+        else if(!h.pit && markHint('pit'))
+          floatHint('Dark holes = missing floor · C to jump · no damage if you slip');
       }
     }
   }

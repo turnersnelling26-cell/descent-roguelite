@@ -280,8 +280,8 @@
   #victory .vtip{color:#a89070;font-size:10px;letter-spacing:.03em;margin-bottom:8px;max-width:30em;margin-left:auto;margin-right:auto;line-height:1.45}
   #victory .vunlock{color:#7a9ec4;font-size:10px;letter-spacing:.04em;margin-bottom:12px;max-width:28em;margin-left:auto;margin-right:auto;line-height:1.45}
   #startWpn,#boon,#altar{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%) scale(.96);z-index:9;
-    text-align:center;padding:22px 28px;background:#0a0c12ee;border:1px solid #2c3042;border-radius:14px;
-    opacity:0;pointer-events:none;transition:.18s}
+    text-align:center;padding:22px 28px;background:#0a0c12f2;border:1px solid #2c3042;border-radius:14px;
+    opacity:0;pointer-events:none;transition:.18s;box-shadow:0 0 0 9999px #07080d99}
   #startWpn.show,#boon.show,#altar.show{opacity:1;pointer-events:auto;transform:translate(-50%,-50%) scale(1)}
   #startWpn .stitle,#boon .stitle,#altar .stitle{color:var(--gold,#d9a441);letter-spacing:.35em;font-size:12px;margin-bottom:6px}
   #altar .stitle{color:#e07090}

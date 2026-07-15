@@ -1,5 +1,6 @@
 /**
- * Level-up boon overlay — pick one of three (seeded). Force only every 3rd level.
+ * Level-up boon overlay — pick one of three (seeded).
+ * Choices are DEFERRED until combat is calm so mid-fight menus can't kill you.
  */
 import * as run from './state.js';
 import { gShuffle, gPick } from './rng.js';
@@ -14,10 +15,35 @@ const BOON_DEFS = {
   force:     { name:'Force',     desc:'+1 weapon damage',  apply:()=>{ run.state.mods.dmgBonus++; run.renderHud(); } },
 };
 
-let open = false, offers = [], onPicked = null;
+let open = false, offers = [], pending = 0, toastPending = false;
 
+/** Called on level-up — does NOT open UI immediately. */
 export function queueLevelBoon(){
-  /* called when level increases; may stack if multi-level */
+  pending++;
+  if(!open && !toastPending){
+    toastPending = true;
+    showToast('Level up — pick a boon when the room is clear');
+  }
+}
+
+export function boonOpen(){ return open; }
+export function boonsPending(){ return pending; }
+
+/**
+ * Call each frame from the game loop.
+ * Opens the overlay only when no threat is nearby (safe room).
+ * @param {boolean} combatNearby — true if an alive aggro foe is close
+ */
+export function tickBoonOffer(combatNearby){
+  if(open || pending <= 0) return;
+  if(combatNearby) return;
+  openNextBoon();
+}
+
+function openNextBoon(){
+  if(pending <= 0 || open) return;
+  pending--;
+  toastPending = false;
   const pool = ['vitality', 'clarity', 'swiftness', 'precision'];
   if(run.state.level % 3 === 0) pool.push('force');
   const shuffled = gShuffle([...pool]);
@@ -30,9 +56,9 @@ export function queueLevelBoon(){
   offers = three;
   open = true;
   showOverlay();
+  /* brief grace: world is frozen by main while open */
+  sfx.pickup();
 }
-
-export function boonOpen(){ return open; }
 
 export function selectBoon(i){
   if(!open) return;
@@ -44,7 +70,8 @@ export function selectBoon(i){
   sfx.pickup();
   open = false; offers = [];
   hideOverlay();
-  if(onPicked) onPicked();
+  /* chain remaining levels after a beat of calm (next frame will re-check) */
+  if(pending > 0) toastPending = true;
 }
 
 function showOverlay(){

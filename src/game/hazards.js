@@ -136,20 +136,9 @@ export function spawnHazards(D, themeKey){
   }
   plates.count = spikes.count = traps.length;
 
-  /* pits */
+  /* Damaging pits removed — parkour maze rooms own jump-gaps (no HP loss). */
   pits = [];
-  const nPits = Math.min(PIT_CAP, 6 + run.state.floor);
-  const ent = D.rooms[D.entrance];
-  while(pits.length < nPits){
-    const p = pickTile(D, anyRoom, [...traps, ...pits], 4);
-    if(!p) break;
-    if(Math.abs(p.tx - ent.cx) + Math.abs(p.tz - ent.cy) < 8) continue;   // not by the door
-    pits.push({ ...p, x:p.tx - D.W/2 + 0.5, z:p.tz - D.H/2 + 0.5, ti:p.c });
-  }
-  pitMeshes.forEach((m,i)=>{
-    m.visible = false;
-    if(pits[i]) m.position.set(pits[i].x, 0, pits[i].z);
-  });
+  pitMeshes.forEach(m=>{ m.visible = false; });
 
   /* themed hazard — suppressed on the teaching floor (floor 1) */
   themeKind = themeKey;
@@ -220,22 +209,7 @@ function updateSpikes(dt, D, pp, t){
   if(colors && plates.instanceColor) plates.instanceColor.needsUpdate = true;
 }
 
-function updatePits(dt, D, player, pp, t){
-  let nearAny = false;
-  for(let i=0; i<pits.length; i++){
-    const pit = pits[i], m = pitMeshes[i];
-    m.visible = fogSeen(pit.ti);
-    const d = Math.hypot(pp.x - pit.x, pp.z - pit.z);
-    if(d < 1.2) nearAny = true;
-    if(d < PIT_R - 0.02 && !airborne(t)){        // over the edge and not jumping
-      sfx.boom();
-      if(!run.state.mods.featherfall) hazHit(DMG, t);
-      pp.x = lastSafe.x; pp.z = lastSafe.z;       // hauled back to safe footing
-      return;
-    }
-  }
-  if(!nearAny){ lastSafe.x = pp.x; lastSafe.z = pp.z; }
-}
+function updatePits(){ /* no-op: damaging pits retired in favor of parkour gaps */ }
 
 function updateThemed(dt, D, player, pp, t){
   /* frost: a warning ring finds you, then the ceiling lets go */

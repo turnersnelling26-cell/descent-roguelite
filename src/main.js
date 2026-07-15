@@ -11,11 +11,11 @@ import {
   generateDungeon, mulberry32, makeRng, delaunay, themeFromSeed,
   THEMES, THEME_KEYS, TYPE, VOID, FLOOR, WALL, POOL,
 } from './gen/dungeon.js';
-import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump, failedDashNoMana, getDecoy } from './game/player.js';
+import { createPlayer, spawnPlayer, updatePlayer, tryDash, tryJump, failedDashNoMana, getDecoy, refreshPlayerWeapon } from './game/player.js';
 import { WEAPONS } from './game/weapons.js';
 import { fogReset, fogSuspend, fogMark, fogGate, fogSeen, fogWrite,
          setFogEnabled, fogStats } from './game/fog.js';
-import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage } from './game/enemies.js';
+import { createEnemies, spawnEnemies, updateEnemies, tryAttack, enemyStats, dismissVictory, onEnemyDamage, combatNearby } from './game/enemies.js';
 import { createLoot, spawnLoot, updateLoot, lootStats, showToast, takeWeapon, weaponPromptActive } from './game/loot.js';
 import { spawnShrines, updateShrines, selectShrine, shrineActive, shrineStats } from './game/shrines.js';
 import { createSeal, spawnSeal, updateSeal, sealStats } from './game/seal.js';
@@ -23,7 +23,7 @@ import { createHazards, spawnHazards, updateHazards, hazardStats } from './game/
 import { openShop, buyShopItem, shopDescend, cancelShop, shopOpen, shopStats, resetShopRun } from './game/shop.js';
 import { createParkour, spawnParkour, updateParkour, parkourStats } from './game/parkour.js';
 import { createAltars, spawnAltars, updateAltars, selectAltar, altarActive } from './game/altars.js';
-import { selectBoon, boonOpen, queueLevelBoon } from './game/boons.js';
+import { selectBoon, boonOpen, queueLevelBoon, tickBoonOffer } from './game/boons.js';
 import { RELICS, ALL_RELIC_KEYS } from './game/relics.js';
 import { sfx, ensureAudio, setMuted, audioStats } from './game/audio.js';
 import * as run from './game/state.js';
@@ -69,6 +69,7 @@ scene.fog = new THREE.FogExp2(canvasBg, 0.002);
 
 /* player lives on the scene (not the level group) so it survives reforge */
 const player = createPlayer(scene);
+run.onEquipWeapon(()=> refreshPlayerWeapon(player));
 createEnemies(scene);
 createLoot(scene);
 createSeal(scene);
@@ -1561,6 +1562,7 @@ function finishAnim(){
   animating = false; animT = Infinity;
   settleAll(); setOverlayStatic(); setStageDone();
   spawnPlayer(player, D);
+  refreshPlayerWeapon(player);
   spawnEnemies(D);
   spawnLoot(D);
   spawnShrines(D);
@@ -1894,6 +1896,8 @@ function tick(){
   liveUpdate(elapsed, animating ? animT - 2.3 : Infinity);
   if(!animating && player.root.visible && !run.state.dead && !gameOver && !shopOpen() && !boonOpen() && !paused){
     run.tickRegen(dt);
+    /* level-ups wait until no foes nearby — menus never mid-scrum */
+    tickBoonOffer(combatNearby(player, 7.5));
     if(updatePlayer(player, dt, D, yaw, elapsed)){
       /* follow while moving; idle leaves camTarget alone so pan/orbit still work */
       camTarget.lerp(player.root.position, 1 - Math.exp(-6*dt));

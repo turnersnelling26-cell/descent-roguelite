@@ -53,16 +53,18 @@ const AFFIX = {
   volatile:  { color:0xff8a30, deathBurst:true },
 };
 const ELITE_SCALE = 1.15;
-const AGGRO = 6, DEAGGRO = 10, CONTACT = 0.65, E_R = 0.26;
-const HIT_FLASH = 0.15, DEATH_ANIM = 0.25;
-const INVULN = 0.8, HURT_FLASH = 0.25;
+const AGGRO = 6.5, DEAGGRO = 10, CONTACT = 0.62, E_R = 0.28;
+const HIT_FLASH = 0.12, DEATH_ANIM = 0.28;
+const INVULN = 0.75, HURT_FLASH = 0.22;
 const PROJ_CAP = 24, PROJ_HIT = 0.55;
 const EPROJ_CAP = 48, EPROJ_HIT = 0.45;
+const HITSTOP = 0.045; // brief freeze on solid hits for impact
 
 let bodies = null, ring = null, list = [];
 let projPool = [], projActive = [];       // player bolts (damage enemies)
 let eProjPool = [], eProjActive = [];     // enemy bolts (damage the player)
 let attackAt = -1e9, hurtAt = -1e9, ringAt = -1e9, attackRadius = 1.3;
+let hitstopUntil = -1e9, lungeUntil = -1e9, lungeX = 0, lungeZ = 0;
 let bossRoomId = -1, bossPos = null, dungeonName = '', won = false, bossExists = false;
 
 const _p = new THREE.Vector3(), _q = new THREE.Quaternion(),
@@ -91,59 +93,63 @@ function mergeGeos(parts){
   out.setAttribute('normal', new THREE.BufferAttribute(nor,3));
   return out;
 }
-function gruntGeo(){    // horned imp: capsule + two out-turned horns
+/* Blocky silhouettes — same language as the dungeon geometry */
+function gruntGeo(){    // stocky horned cube-imp
   return mergeGeos([
-    xg(new THREE.CapsuleGeometry(0.24, 0.3, 4, 10), 0, 0.42, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.24, 5),  0.15, 0.68, 0, 0,0,-0.55, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.24, 5), -0.15, 0.68, 0, 0,0, 0.55, 1),
+    xg(new THREE.BoxGeometry(0.42, 0.38, 0.36), 0, 0.36, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.28, 0.22, 0.28), 0, 0.66, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.22, 0.10),  0.14, 0.86, 0, 0,0,-0.3, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.22, 0.10), -0.14, 0.86, 0, 0,0, 0.3, 1),
   ]);
 }
-function casterGeo(){   // hooded seer: robe cone + head + wide hat brim
+function casterGeo(){   // floating robe tower + hat slab
   return mergeGeos([
-    xg(new THREE.ConeGeometry(0.3, 0.62, 7),   0, 0.31, 0, 0,0,0, 1),
-    xg(new THREE.SphereGeometry(0.13, 8, 7),   0, 0.70, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.3, 0.14, 7),   0, 0.82, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.05, 0.16, 5),  0, 0.94, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.40, 0.55, 0.40), 0, 0.40, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.26, 0.22, 0.26), 0, 0.78, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.48, 0.10, 0.48), 0, 0.92, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.18, 0.10), 0, 1.06, 0, 0,0,0, 1),
   ]);
 }
-function chargerGeo(){  // battering brute: low slab + forward ram horn
+function chargerGeo(){  // low battering brick + ram block
   return mergeGeos([
-    xg(new THREE.BoxGeometry(0.46, 0.36, 0.6), 0, 0.24, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.13, 0.36, 6),  0, 0.34, 0.42, Math.PI/2,0,0, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.2, 5),   0.16, 0.5, 0.16, -0.5,0,-0.4, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.2, 5),  -0.16, 0.5, 0.16, -0.5,0, 0.4, 1),
+    xg(new THREE.BoxGeometry(0.52, 0.36, 0.62), 0, 0.28, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.22, 0.22, 0.36), 0, 0.38, 0.40, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.18, 0.10),  0.18, 0.52, 0.18, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.18, 0.10), -0.18, 0.52, 0.18, 0,0,0, 1),
   ]);
 }
-function bossGeo(){     // crowned tyrant: broad capsule + crown + shoulder spikes
+function bossGeo(){     // crowned tyrant brick stack
   return mergeGeos([
-    xg(new THREE.CapsuleGeometry(0.34, 0.5, 4, 12), 0, 0.68, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.07, 0.3, 5),   0,    1.26, 0, 0,0,0, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.24, 5),  0.15, 1.2,  0, 0,0,-0.35, 1),
-    xg(new THREE.ConeGeometry(0.06, 0.24, 5), -0.15, 1.2,  0, 0,0, 0.35, 1),
-    xg(new THREE.ConeGeometry(0.09, 0.3, 5),   0.4,  0.9,  0, 0,0,-1.0, 1),
-    xg(new THREE.ConeGeometry(0.09, 0.3, 5),  -0.4,  0.9,  0, 0,0, 1.0, 1),
+    xg(new THREE.BoxGeometry(0.62, 0.70, 0.50), 0, 0.55, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.40, 0.30, 0.40), 0, 1.05, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.12, 0.28, 0.12), 0, 1.34, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.22, 0.10),  0.16, 1.28, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.22, 0.10), -0.16, 1.28, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.18, 0.20, 0.18),  0.40, 0.85, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.18, 0.20, 0.18), -0.40, 0.85, 0, 0,0,0, 1),
   ]);
 }
-function bomberGeo(){   // fuse pot: squat sphere + short fuse stub
+function bomberGeo(){   // fuse crate
   return mergeGeos([
-    xg(new THREE.SphereGeometry(0.28, 10, 8), 0, 0.32, 0, 0,0,0, 1),
-    xg(new THREE.CylinderGeometry(0.05, 0.05, 0.22, 6), 0, 0.58, 0, 0,0,0, 1),
-    xg(new THREE.SphereGeometry(0.07, 6, 5), 0, 0.72, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.46, 0.42, 0.46), 0, 0.32, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.10, 0.24, 0.10), 0, 0.62, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.14, 0.14, 0.14), 0, 0.78, 0, 0,0,0, 1),
   ]);
 }
-function wardenGeo(){   // shield wall: tall slab + side guards
+function wardenGeo(){   // walking shield wall
   return mergeGeos([
-    xg(new THREE.BoxGeometry(0.55, 0.7, 0.28), 0, 0.4, 0, 0,0,0, 1),
-    xg(new THREE.BoxGeometry(0.42, 0.55, 0.1), 0, 0.42, 0.22, 0,0,0, 1),
-    xg(new THREE.BoxGeometry(0.12, 0.45, 0.22), 0.28, 0.38, 0, 0,0,0, 1),
-    xg(new THREE.BoxGeometry(0.12, 0.45, 0.22), -0.28, 0.38, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.50, 0.72, 0.28), 0, 0.46, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.56, 0.60, 0.12), 0, 0.50, 0.22, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.14, 0.48, 0.22),  0.30, 0.42, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.14, 0.48, 0.22), -0.30, 0.42, 0, 0,0,0, 1),
   ]);
 }
-function summonerGeo(){ // tall thin staff + floating head
+function summonerGeo(){ // staff mage tower
   return mergeGeos([
-    xg(new THREE.ConeGeometry(0.22, 0.7, 6), 0, 0.35, 0, 0,0,0, 1),
-    xg(new THREE.SphereGeometry(0.12, 8, 6), 0, 0.78, 0, 0,0,0, 1),
-    xg(new THREE.CylinderGeometry(0.03, 0.03, 0.7, 5), 0.22, 0.45, 0, 0,0,0.3, 1),
+    xg(new THREE.BoxGeometry(0.32, 0.62, 0.32), 0, 0.40, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.22, 0.22, 0.22), 0, 0.82, 0, 0,0,0, 1),
+    xg(new THREE.BoxGeometry(0.08, 0.72, 0.08), 0.24, 0.50, 0, 0,0,0.2, 1),
+    xg(new THREE.BoxGeometry(0.14, 0.14, 0.14), 0.24, 0.90, 0, 0,0,0, 1),
   ]);
 }
 const BODY_CAPS = { grunt:160, caster:64, charger:64, bomber:48, warden:32, summoner:24, boss:4 };
@@ -379,7 +385,7 @@ export const onEnemyDamage = cb => { onDamageCb = cb; };
 function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false, opts={}){
   if(!opts.pierceShield && wardenBlocks(e, fromX, fromZ)){
     e.flashAt = t;
-    sfx.swing();
+    if(sfx.block) sfx.block(); else sfx.swing();
     return false;
   }
   e.hp -= dmg; e.flashAt = t;
@@ -388,10 +394,15 @@ function damageEnemy(e, dmg, knock, fromX, fromZ, D, t, crit=false, opts={}){
     e.hp = 0;
   }
   if(onDamageCb) onDamageCb(e.x, e.z, dmg, crit);
-  sfx.hit();
+  if(crit) sfx.crit();
+  else sfx.hit();
+  /* punchier knockback; scale by remaining HP for light enemies */
+  const knockMul = e.isBoss ? 0.55 : (1 + 0.15 * (1 - e.hp / Math.max(1, e.maxHp)));
   if(!e.knockImmune){
     const d = Math.hypot(e.x - fromX, e.z - fromZ) || 1;
-    const ux = (e.x - fromX)/d, uz = (e.z - fromZ)/d, kx = e.x + ux*knock, kz = e.z + uz*knock;
+    const ux = (e.x - fromX)/d, uz = (e.z - fromZ)/d;
+    const kAmt = knock * knockMul;
+    const kx = e.x + ux*kAmt, kz = e.z + uz*kAmt;
     if(canStand(D, kx, e.z, E_R)) e.x = kx;
     if(canStand(D, e.x, kz, E_R)) e.z = kz;
   }
@@ -505,7 +516,9 @@ export function damageEnemiesAt(x, z, r, dmg, D, t, except = null){
 export function tryAttack(player, D, t){
   const w = WEAPONS[run.state.weaponKey] || WEAPONS.blade;
   if(t < attackAt + w.cd * run.state.mods.atkCdMul) return;
+  if(t < hitstopUntil) return;
   const pp = player.root.position;
+  const face = player.body.rotation.y;
   if(w.kind === 'ranged'){
     if(!run.spendMana(w.mana)) return;
     attackAt = t; sfx.swing();
@@ -514,31 +527,52 @@ export function tryAttack(player, D, t){
     return;
   }
   attackAt = t; ringAt = t; attackRadius = w.radius;
-  sfx.swing();
-  ring.position.set(pp.x, 0.5, pp.z);
+  if(w.key === 'hammer'){ if(sfx.heavySwing) sfx.heavySwing(); else sfx.swing(); }
+  else sfx.swing();
+  /* forward lunge — sells the swing */
+  const lunge = w.key === 'hammer' ? 0.22 : w.key === 'spear' ? 0.32 : w.key === 'fangs' ? 0.18 : 0.14;
+  lungeX = Math.sin(face) * lunge; lungeZ = Math.cos(face) * lunge;
+  lungeUntil = t + 0.09;
+  const nx = pp.x + lungeX, nz = pp.z + lungeZ;
+  if(canStand(D, nx, pp.z, 0.28, true)) pp.x = nx;
+  if(canStand(D, pp.x, nz, 0.28, true)) pp.z = nz;
+
+  ring.position.set(pp.x, 0.45, pp.z);
+  ring.material.color.set(w.color || 0x9ffdea);
   const crit = Math.random() < run.effectiveCrit(w.crit);
   const dmg = (w.dmg + run.effectiveDmgBonus()) * (crit ? 2 : 1);
-  if(crit) sfx.crit();
   const hitList = [];
+  /* front cone so facing matters (spear narrow, hammer wide) */
+  const arc = w.arcDeg || (w.key === 'hammer' ? 150 : w.key === 'fangs' ? 95 : 115);
   for(const e of list){
     if(!e.alive) continue;
     const dist = Math.hypot(e.x - pp.x, e.z - pp.z);
     if(dist > w.radius) continue;
-    /* spear arc: only front cone */
-    if(w.arcDeg){
-      const face = player.body.rotation.y;
-      const ang = Math.atan2(e.x - pp.x, e.z - pp.z);
-      let diff = ang - face;
-      while(diff > Math.PI) diff -= Math.PI*2;
-      while(diff < -Math.PI) diff += Math.PI*2;
-      if(Math.abs(diff) > (w.arcDeg/2) * Math.PI/180) continue;
-    }
-    damageEnemy(e, dmg, w.knock * (crit ? 1.4 : 1), pp.x, pp.z, D, t, crit, {
+    const ang = Math.atan2(e.x - pp.x, e.z - pp.z);
+    let diff = ang - face;
+    while(diff > Math.PI) diff -= Math.PI*2;
+    while(diff < -Math.PI) diff += Math.PI*2;
+    if(Math.abs(diff) > (arc/2) * Math.PI/180) continue;
+    const landed = damageEnemy(e, dmg, w.knock * (crit ? 1.5 : 1), pp.x, pp.z, D, t, crit, {
       pierceShield: !!w.pierceShield,
     });
-    hitList.push(e);
+    if(landed !== false) hitList.push(e);
+  }
+  if(hitList.length){
+    hitstopUntil = t + HITSTOP * (crit ? 1.7 : 1) * (w.key === 'hammer' ? 1.5 : w.key === 'fangs' ? 0.7 : 1);
   }
   noteStrike(hitList, D, t, pp);
+}
+
+/** True if any living foe is close enough to make menus unsafe. */
+export function combatNearby(player, range = 7){
+  if(!player) return false;
+  const pp = player.root.position;
+  for(const e of list){
+    if(!e.alive || e.gone) continue;
+    if(Math.hypot(e.x - pp.x, e.z - pp.z) < range) return true;
+  }
+  return false;
 }
 
 function noteStrike(hitList, D, t, pp){
@@ -558,10 +592,21 @@ function moveToward(e, tx, tz, step, D, t=0){   // step<0 = retreat; axis-separa
   step *= slow;
   const dx = tx - e.x, dz = tz - e.z, d = Math.hypot(dx, dz) || 1;
   e.face = Math.atan2(dx, dz);
-  const nx = e.x + (dx/d)*step;
-  if(canStand(D, nx, e.z, E_R)) e.x = nx;
-  const nz = e.z + (dz/d)*step;
-  if(canStand(D, e.x, nz, E_R)) e.z = nz;
+  const ux = dx/d, uz = dz/d;
+  let moved = false;
+  const nx = e.x + ux*step;
+  if(canStand(D, nx, e.z, E_R)){ e.x = nx; moved = true; }
+  const nz = e.z + uz*step;
+  if(canStand(D, e.x, nz, E_R)){ e.z = nz; moved = true; }
+  /* slide around parkour blocks when direct path is blocked */
+  if(!moved && Math.abs(step) > 0.001){
+    const side = 0.7 * Math.sign(step || 1);
+    if(canStand(D, e.x - uz*side*Math.abs(step), e.z + ux*side*Math.abs(step), E_R)){
+      e.x -= uz*side*Math.abs(step); e.z += ux*side*Math.abs(step);
+    } else if(canStand(D, e.x + uz*side*Math.abs(step), e.z - ux*side*Math.abs(step), E_R)){
+      e.x += uz*side*Math.abs(step); e.z -= ux*side*Math.abs(step);
+    }
+  }
 }
 function fireEnemyBolt(x, z, dx, dz, speed, dmg, color){
   const pr = eProjPool.pop();
@@ -823,6 +868,11 @@ function updateBossBar(t){
 
 export function updateEnemies(dt, D, player, t){
   if(!list.length){ updateBossBar(t); return; }
+  /* hitstop freezes enemy AI briefly on solid hits */
+  if(t < hitstopUntil){
+    updateBossBar(t);
+    return;
+  }
   const pp = player.root.position;
   let colorsDirty = false;
   clearDecoy(t);
@@ -890,12 +940,12 @@ export function updateEnemies(dt, D, player, t){
         }
       }
 
-      /* contact damage (per-enemy cooldown + player invulnerability) */
+      /* contact damage — shorter shove, clearer i-frames */
       e.cd -= dt;
       const contactDmg = e.T.dmg || 0;
       if(contactDmg > 0 && dist < CONTACT && e.cd <= 0 && t - hurtAt > INVULN && !dashInvuln(t)
-         && e.mode !== 'swell' && e.behavior !== 'bomber'){
-        e.cd = 0.8; hurtAt = t;
+         && e.mode !== 'swell' && e.mode !== 'volSwell' && e.behavior !== 'bomber'){
+        e.cd = 0.85; hurtAt = t;
         sfx.hurt();
         const cause = e.isBoss
           ? (run.state.floor >= FINAL_FLOOR ? 'the Tyrant' : 'the boss')
@@ -906,8 +956,10 @@ export function updateEnemies(dt, D, player, t){
         const dead = run.damage(dmgHit, cause);
         if(e.vamp && e.alive){ e.hp = Math.min(e.maxHp, e.hp + 1); }
         if(run.state.mods.thorns && e.alive) damageEnemy(e, run.state.mods.thorns, 0.35, pp.x, pp.z, D, t);
+        /* softer knock so parkour near walls is less unfair */
         const d = dist || 1;
-        const px = pp.x + (pp.x - e.x)/d * 0.5, pz = pp.z + (pp.z - e.z)/d * 0.5;
+        const shove = e.isBoss ? 0.55 : 0.38;
+        const px = pp.x + (pp.x - e.x)/d * shove, pz = pp.z + (pp.z - e.z)/d * shove;
         if(canStand(D, px, pp.z)) pp.x = px;
         if(canStand(D, pp.x, pz)) pp.z = pz;
         if(dead){ sfx.die(); return; }
@@ -976,10 +1028,11 @@ export function updateEnemies(dt, D, player, t){
   updateBossBar(t);
 
   /* attack swing ring — sized to the equipped weapon's reach */
-  const rk = (t - ringAt) / 0.25;
+  const rk = (t - ringAt) / 0.22;
   if(rk < 1){
-    ring.scale.setScalar((0.4 + rk*1.1) * attackRadius/1.3);
-    ring.material.opacity = 0.7*(1 - rk);
+    ring.scale.setScalar((0.55 + rk*1.15) * attackRadius/1.3);
+    ring.material.opacity = 0.85*(1 - rk);
+    ring.material.color.set(rk < 0.15 ? 0xffffff : 0x9ffdea);
   } else ring.material.opacity = 0;
 
 }

@@ -165,11 +165,15 @@ export function tickRegen(dt, rate = 0.7){
     e.mana.textContent = Math.floor(state.mana) + ' / ' + state.maxMana;
   }
 }
+let equipHook = null;
+export function onEquipWeapon(cb){ equipHook = cb; }
+
 export function equipWeapon(key){
   const w = weaponOf(key);
   state.weaponKey = w.key; state.weapon = w.name; state.weaponDmg = w.dmg; state.weaponSpeed = w.speedTag;
   noteWeapon(w.key);
   renderHud();
+  if(equipHook) equipHook(key);
 }
 
 export function setDeathCause(cause){
